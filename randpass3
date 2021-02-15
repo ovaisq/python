@@ -4,12 +4,18 @@ import random
 import argparse
 from RandomWordGenerator import RandomWord
 
+def shuffle(chars_str):
+    for i in range(0,random.randint(12,120)):
+        return (''.join(random.sample(chars_str,len(chars_str))))
+
 def do_it(num_chars):
     rw = RandomWord(max_word_size=2048,special_chars=r"@_!#$%^&*()<>?/\|}{~:",include_special_chars=True)
-    chars = "894765432100123456789"+rw.generate()
-    for i in range(0,random.randint(12,120)):
-        rand_chars = ''.join(random.sample(chars,len(chars)))
-    rand_pass=rand_chars[:num_chars]
+    chars = "01234567890123456789012345678901234567890123456789"+rw.generate()
+
+    rand_pass=shuffle(chars)[:num_chars]
+    while not (any(char.isdigit() for char in rand_pass)):
+        rand_pass=shuffle(chars)[:num_chars]
+
     print ("Num Chars", len(rand_pass))
     print (rand_pass)
 
