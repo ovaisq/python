@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+
+import random
+import argparse
+from RandomWordGenerator import RandomWord
+
+def shuffle(chars_str):
+    for i in range(0,random.randint(12,120)):
+        return (''.join(random.sample(chars_str,len(chars_str))))
+
+def do_it(num_chars):
+    rw = RandomWord(max_word_size=2048,special_chars=r"@_!#$%^&*()<>?/\|}{~:",include_special_chars=True)
+    chars = "01234567890123456789012345678901234567890123456789"+rw.generate()
+
+    rand_pass=shuffle(chars)[:num_chars]
+    while not (any(char.isdigit() for char in rand_pass)):
+        rand_pass=shuffle(chars)[:num_chars]
+
+    print ("Num Chars", len(rand_pass))
+    print (rand_pass)
+
+arg_parser = argparse.ArgumentParser(prog='push_to_hubspot.py', description='Create Contacts in Hubspot')
+
+arg_parser.add_argument(
+			'--num-chars'
+			, dest='number_chars'
+			, action='store'
+			, required=False
+			, default=64
+			, help='Number of Characters'
+			)
+args = arg_parser.parse_args()
+number_chars = args.number_chars
+
+do_it(int(number_chars))

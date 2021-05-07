@@ -1,0 +1,74 @@
+#!/usr/bin/env python
+"""Random character password generator - plus sign is replaced
+    with a single digit (0 to 9)
+    https://unix.stackexchange.com/questions/324209/when-to-use-dev-random-vs-dev-urandom#324210
+"""
+
+from base64 import b64encode
+from os import urandom
+
+import argparse
+import random
+
+def rand_string_digit (total_chars):
+    return str(random.randint(2,total_chars-1))
+
+def chars_to_bytes(chars):
+    if chars == 64:
+        return 46 #bytes
+    if chars == 32:
+        return 46//2 #bytes
+    if chars == 16:
+        return 46//4 #bytes
+    if chars == 8:
+        return 46//8 #bytes
+
+def entropy_seed(num_char):
+    for i in range(random.randint(random.randint(1,13),random.randint(14,42))):
+        rand_bytes = urandom(chars_to_bytes(num_char))
+    return rand_bytes
+
+arg_parser = argparse.ArgumentParser(prog='randpass', description='Random Password Generator \n Supports 8,16,32, or 64 chars')
+
+arg_parser.add_argument(
+                        '--num-chars'
+                        , dest='num_chars'
+                        , action='store'
+                        , required=False
+                        , default=64
+                        , help='Number of chars - 8, 16, 32 or 64(default)'
+                        )
+
+arg_parser.add_argument(
+                        '--alphanum-only'
+                        , dest='alphanum_only'
+                        , action='store_true'
+                        , required=False
+                        , help='Alphanumeric nums only'
+                        )
+
+args = arg_parser.parse_args()
+num_chars = int(args.num_chars)
+alphanum_only = args.alphanum_only
+
+num_chars_supported = [8, 16, 32, 64]
+
+if num_chars in num_chars_supported:
+    random_bytes = entropy_seed (num_chars)
+    token = b64encode(random_bytes).decode('utf-8')
+    if not alphanum_only:
+        # replace + for very few apps allow use of it - so filtering it out by default
+        randtoken = ''.join(random.sample(token,len(token))).replace('+',rand_string_digit(9))
+    else:
+        # some sites use only alpha numeric
+        for non_alpha_num in  ['/','=','+','-']:
+            if non_alpha_num in token:
+                randtoken = ''.join(random.sample(token,len(token))).replace(non_alpha_num,rand_string_digit(9))
+                token = randtoken
+
+    print len(randtoken), "characters long password"
+    print randtoken
+    entropy_seed (num_chars)
+
+else:
+    print 'ERROR: Only following number of chars supported', num_chars_supported
