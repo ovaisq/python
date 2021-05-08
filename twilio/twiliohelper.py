@@ -41,7 +41,10 @@ class TwilioHelper(object):
                 self.message_status = self._client.messages(self.sid).fetch().status
                 return self.message_status
         else:
-            print ('Destination Phone Number',send_to,'is invalid. Please Try again')
+             self.message_status = 'Destination Phone Number '
+             self.message_status += send_to
+             self.message_status += ' is invalid. Please Try again'
+             return self.message_status
 
     def validatephone(self, send_to):
         """Validate Phone Number
@@ -58,6 +61,9 @@ class TwilioHelper(object):
         response = requests.get(self.phone_validate_api_url,params=self.params)
         decoded_content = json.loads(response.content.decode('UTF-8'))
         is_phonenumber_valid = decoded_content['valid']
-        return is_phonenumber_valid
+        if is_phonenumber_valid:
+            return is_phonenumber_valid
+        else:
+            return False
 
 

@@ -3,15 +3,12 @@
 
 Example:
     Unhappy path
-        ./sendmessage.py --send-sms-to +17145551212 --send-sms
-
-        Destination Phone Number +17145551212 is invalid. Please Try again
-        Message Status: None
+        ./sendmessage.py --send-sms-to +1714555
+        Message Status: Destination Phone Number +1714555 is invalid. Please Try again
 
     Happy Path
-    ./sendmessage.py --send-sms-to +17145551212 --send-sms
-
-    Message Status: delivered
+        ./sendmessage.py --send-sms-to +17145551212
+        Message Status: delivered
 """
 
 import argparse
@@ -30,13 +27,6 @@ def main():
 
     arg_parser = argparse.ArgumentParser(description="Twilio Messaging Tool")
     arg_parser.add_argument (
-                             '--send-sms',
-                             dest='send_sms',
-                             action='store_true',
-                             default='',
-                             help="Send SMS",
-                            )
-    arg_parser.add_argument (
                              '--send-sms-to',
                              dest='send_sms_to',
                              action='store',
@@ -52,14 +42,13 @@ def main():
                             )
 
     args = arg_parser.parse_args()
-    send_sms = args.send_sms
     send_sms_to = args.send_sms_to
     send_sms_msg = args.send_sms_msg
 
     #instantiate twilio    
     tw = twilio()
 
-    if send_sms:
+    if send_sms_to:
         message_info = tw.sendsms(send_sms_to,send_sms_msg)
         print ('Message Status:',message_info)
     else:
