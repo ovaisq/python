@@ -61,9 +61,7 @@ class TwilioHelper(object):
         response = requests.get(self.phone_validate_api_url,params=self.params)
         decoded_content = json.loads(response.content.decode('UTF-8'))
         is_phonenumber_valid = decoded_content['valid']
-        if is_phonenumber_valid:
-            return is_phonenumber_valid
-        else:
-            return False
+
+        return is_phonenumber_valid
 
 
