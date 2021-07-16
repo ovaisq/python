@@ -1,7 +1,9 @@
 abstract-python-core==1.0.0
 abstract-python-phone-validation==1.0.0
-configparser==5.0.2
-pypandoc==1.5
-randomwordgenerator==1.0.0
-requests==2.25.1
+configparser
+pypandoc
+pandoc
+pyperclip
+Random-Word-Generator
+requests
 twilio==6.58.0

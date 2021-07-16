@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
-import random
 import argparse
+import random
+import pyperclip
 from RandomWordGenerator import RandomWord
 
 def shuffle(chars_str):
@@ -18,6 +19,9 @@ def do_it(num_chars):
 
     print ("Num Chars", len(rand_pass))
     print (rand_pass)
+    #copy the password to the clipboard
+    print ('Copied to the clipboard')
+    pyperclip.copy(rand_pass)
 
 arg_parser = argparse.ArgumentParser(prog='push_to_hubspot.py', description='Create Contacts in Hubspot')
 

@@ -2,12 +2,14 @@
 """Random character password generator - plus sign is replaced
     with a single digit (0 to 9)
     https://unix.stackexchange.com/questions/324209/when-to-use-dev-random-vs-dev-urandom#324210
+    Python 2.x
 """
 
 from base64 import b64encode
 from os import urandom
 
 import argparse
+import pyperclip
 import random
 
 def rand_string_digit (total_chars):
@@ -68,6 +70,8 @@ if num_chars in num_chars_supported:
 
     print len(randtoken), "characters long password"
     print randtoken
+    print ('Copied to the clipboard')
+    pyperclip.copy(randtoken)
     entropy_seed (num_chars)
 
 else:
