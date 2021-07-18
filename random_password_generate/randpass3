@@ -23,7 +23,7 @@ def do_it(num_chars):
     print ('Copied to the clipboard')
     pyperclip.copy(rand_pass)
 
-arg_parser = argparse.ArgumentParser(prog='push_to_hubspot.py', description='Create Contacts in Hubspot')
+arg_parser = argparse.ArgumentParser(prog='randpass3', description='Generate random passwords')
 
 arg_parser.add_argument(
 			'--num-chars'
