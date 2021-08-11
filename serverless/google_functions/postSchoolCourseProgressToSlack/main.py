@@ -244,7 +244,8 @@ def main(data, context):
 
     #sort and group course per org table, add to payload
     payload_text = '[Environment: ' + this_env + ']\n'
-    for row in acur.execute ("select org, course, next_course, courses_left, num_days_left from results where id in (select max(id) from results group by org)").fetchall():
+    rows = acur.execute ("select org, course, next_course, courses_left, num_days_left from results where id in (select max(id) from results group by org)").fetchall()
+    for row in rows:
         payload_text += '\t['+row[0]+']\n'
         payload_text += '\t\tCurrent course  : '+row[1]+'\n'
         payload_text += '\t\tNext Course     : '+row[2]+'\n'
