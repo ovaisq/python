@@ -104,11 +104,11 @@ fi
 ```
       - name: Deploy the function on Production CANADA
         run: |
-          echo "PROJECT_ID=worklete-prod-canada" >> $GITHUB_ENV
+          echo "PROJECT_ID=prod-canada" >> $GITHUB_ENV
           chmod +x deploy.sh
           ./deploy.sh
         env:
-          PROJECT_ID: worklete-prod-canada
+          PROJECT_ID: prod-canada
           PROJECT_PATH: admin
           MY_FUNCTION: postSchoolCourseProgressToSlack              <--- Change this
           PUBSUB_JOB_NAME: post_school_course_progress_to_slack_job
