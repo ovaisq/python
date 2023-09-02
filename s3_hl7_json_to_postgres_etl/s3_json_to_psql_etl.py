@@ -37,7 +37,7 @@ def read_config(file_path):
     return config_obj
 
 def get_s3_jsons(sparksession, s3_full_path):
-    """ get all jsons
+    """ get all jsons from
     """
     try:
         a_d_f = sparksession.read.option("multiline","true") \
