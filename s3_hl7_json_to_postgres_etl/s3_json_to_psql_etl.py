@@ -2,7 +2,7 @@
 """Script that processes HL7 data from JSON files stored in S3 buckets
     and stores the transformed/processed data in PostgreSQL schema.
    See README.md for more details
-
+    TODO: add logger
 """
 
 import argparse
