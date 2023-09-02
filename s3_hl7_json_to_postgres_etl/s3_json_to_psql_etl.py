@@ -247,7 +247,7 @@ if __name__ == "__main__":
                              default='',
                              required='true',
                              help="Single value or comma separated, \
-                                    Feed name i.e. adt_feed1 or adt_feed1",
+                                    Feed name i.e. adt_feed1 or adt_feed1,adt_feed2",
                             )
 
     args = arg_parser.parse_args()
