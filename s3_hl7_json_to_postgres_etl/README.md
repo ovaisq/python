@@ -72,7 +72,7 @@
 
 
 ## How-to Run:
-        >./s3_json_to_psql_etl.py --adt-feed-name "acme,roadrunner" --s3-bucket-prefix <s3 bucket full prefix/path>
+        >./s3_json_to_psql_etl.py --adt-feed-name "acme,roadrunner" --s3-bucket-prefix <s3 bucket full prefix/path>/*.json
 
         23/09/02 16:15:08 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
         Setting default log level to "WARN".
@@ -82,7 +82,7 @@
 
         23/09/02 16:15:10 WARN MetricsConfig: Cannot locate configuration: tried hadoop-metrics2-s3a-file-system.properties,hadoop-metrics2.properties
         23/09/02 16:15:53 WARN package: Truncated the string representation of a plan since it was too large. This behavior can be adjusted by setting 'spark.sql.debug.maxToStringFields'.
-        
+
         **** Stored data in table v4_acme
         **** Completed for acme
         **** Starting for roadrunner
