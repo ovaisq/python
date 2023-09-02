@@ -95,7 +95,8 @@ def ac_names(sgchild):
     return short_name.lower(), long_name.lower()
 
 def process_data(json_df, segments):
-    """Parse HL7 raw data - extract value, create column names, build a dictionary.i
+    """Parse HL7 raw data - extract values for segments and associated fields, create a dictionary.
+        Add dictironay to list of dictionarties.
     """
 
     parsed_data = []
