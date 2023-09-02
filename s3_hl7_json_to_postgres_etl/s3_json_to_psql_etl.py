@@ -5,6 +5,7 @@
     TODO: add logger
 """
 
+import ast
 import argparse
 import configparser
 import sys
@@ -14,40 +15,6 @@ from datetime import datetime
 from hl7apy.parser import parse_segment, parse_field
 from pyspark.sql import SparkSession
 from pyspark.sql.utils import AnalysisException
-
-# Constants
-IGNORE_SEG_FIELDS = ['PID_1', 'PID_12','PV1_1', 'IN1_1', 'EVN_1','OBX_1', 'AL1_1', 'GT1_1', 'DG1_1']
-IGNORE_COMPONENT_FIELDS = [
-                           'CX_4',
-                           'CX_5',
-                           'XTN_2',
-                           'XTN_3',
-                           'XTN_5',
-                           'XTN_6',
-                           'XTN_7',
-                           'XCN_4',
-                           'XPN_3'
-                          ]
-
-#TODO: make this an arg supplied value
-S3BUCKETPREFIX = '<s3_bucket_name>/2023/08/28'
-
-#TODO: perhaps push it into a config file
-HL7_SEGMENTS = [
-                'pid',
-                'pv1',
-                'pv2',
-                'pd1',
-                'evn',
-                'in1',
-                'in2',
-                'obx',
-                'al1',
-                'gt1',
-                'zpv',
-                'dg1',
-                'nk1'
-                ]
 
 # transformed fields to ignore
 with open('hl7_field_names_to_ignore.txt', encoding='utf-8') as afile:
@@ -69,19 +36,19 @@ def read_config(file_path):
     config_obj.read(file_path)
     return config_obj
 
-def get_s3_jsons(sparksession, s3_bucket_prefix):
+def get_s3_jsons(sparksession, s3_full_path):
     """ get all jsons
     """
     try:
         a_d_f = sparksession.read.option("multiline","true") \
-                .json("s3a://" + s3_bucket_prefix).dropDuplicates()
+                .json("s3a://" + s3_full_path).dropDuplicates()
         return a_d_f
     except AnalysisException:
-        print ("Unable to read JSON files at", s3_bucket_prefix)
+        print ("Unable to read JSON files at", s3_full_path)
         sys.exit(-1)
 
-def ac_names(sgchild):
-    """ segment children names
+def assign_child_name(sgchild):
+    """ assign child names
     """
 
     if sgchild.name is None:
@@ -103,12 +70,12 @@ def process_hl7_segment(hl7_segment, json_dict, new_data_dict):
         segment_data = json_dict[hl7_segment]
         asegment = parse_segment(segment_data)
         for achild in asegment.children:
-            ac_name, ac_long_name = ac_names(achild)
+            ac_name, ac_long_name = assign_child_name(achild)
             if ac_name.upper() not in IGNORE_SEG_FIELDS:
                 field = parse_field(achild.value, name=achild.name)
                 for fchild in field.children:
                     if fchild.name.upper() not in IGNORE_COMPONENT_FIELDS:
-                        fc_name, fc_long_name = ac_names(fchild)
+                        fc_name, fc_long_name = assign_child_name(fchild)
                         field_name = f'{ac_name}_{ac_long_name}_{fc_name}_{fc_long_name}'
                         if field_name not in IGNORE_FIELDS:
                             new_data_dict[field_name] = fchild.value
@@ -255,17 +222,31 @@ if __name__ == "__main__":
                              help="Single value or comma separated, \
                                     Feed name i.e. adt_feed1 or adt_feed1,adt_feed2",
                             )
+    arg_parser.add_argument (
+                             '--s3-bucket-prefix',
+                             dest='s3_bucket_prefix',
+                             action='store',
+                             default='',
+                             required='true',
+                             help="Full path - <bucket-name>/prefix/",
+                            )
 
     args = arg_parser.parse_args()
     # since I had to deal with several adt feeds, I chose to
     #  do it this way.
     adt_feed_name = args.adt_feed_name
+    s3_bucket_full_path = args.s3_bucket_prefix
 
     config = read_config('etl.config')
     spark_master = config.get('spark', 'master')
     spark_master_port = config.get('spark', 'masterport')
     aws_access_key = config.get('aws','access.key')
     aws_secret_key = config.get('aws','secret.key')
+
+    # Constants
+    IGNORE_SEG_FIELDS = ast.literal_eval(config.get('constants','IGNORE_SEG_FIELDS'))
+    IGNORE_COMPONENT_FIELDS = ast.literal_eval(config.get('constants','IGNORE_COMPONENT_FIELDS'))
+    HL7_SEGMENTS = ast.literal_eval(config.get('constants','HL7_SEGMENTS'))
 
     spark = (SparkSession.builder
              .appName('adt_feed' + '_' + adt_feed_name + '_' + str(int(time.time())))
@@ -286,7 +267,7 @@ if __name__ == "__main__":
     # can pass more than one name
     for adt_feed_name in adt_feed_name.split(','):
         print ("**** Starting for", adt_feed_name)
-        df_etl(spark, adt_feed_name, HL7_SEGMENTS, S3BUCKETPREFIX)
+        df_etl(spark, adt_feed_name, HL7_SEGMENTS, s3_bucket_full_path)
         print ("**** Completed for", adt_feed_name)
 
     spark.stop()
