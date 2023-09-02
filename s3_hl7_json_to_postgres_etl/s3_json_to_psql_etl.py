@@ -94,9 +94,31 @@ def ac_names(sgchild):
         long_name = sgchild.long_name
     return short_name.lower(), long_name.lower()
 
-def process_data(json_df, segments):
-    """Parse HL7 raw data - extract values for segments and associated fields, create a dictionary.
+def process_hl7_segment(hl7_segment, json_dict, new_data_dict):
+    """parse HL7 raw data - extract values for segments and associated fields, create a dictionary.
         Add dictironay to list of dictionarties.
+    """
+
+    try:
+        segment_data = json_dict[hl7_segment]
+        asegment = parse_segment(segment_data)
+        for achild in asegment.children:
+            ac_name, ac_long_name = ac_names(achild)
+            if ac_name.upper() not in IGNORE_SEG_FIELDS:
+                field = parse_field(achild.value, name=achild.name)
+                for fchild in field.children:
+                    if fchild.name.upper() not in IGNORE_COMPONENT_FIELDS:
+                        fc_name, fc_long_name = ac_names(fchild)
+                        field_name = f'{ac_name}_{ac_long_name}_{fc_name}_{fc_long_name}'
+                        if field_name not in IGNORE_FIELDS:
+                            new_data_dict[field_name] = fchild.value
+
+        return new_data_dict
+    except (KeyError, ValueError):
+        return False
+
+def process_data(json_df, segments):
+    """process HL7 data
     """
 
     parsed_data = []
@@ -108,26 +130,10 @@ def process_data(json_df, segments):
         }
 
         for s_g in segments:
-            try:
-                adict[s_g]
-            except (KeyError, ValueError):
+            if not process_hl7_segment(s_g, adict, data_dict):
                 continue
+            data_dict = process_hl7_segment(s_g, adict, data_dict)
 
-            asegment = parse_segment(adict[s_g])
-
-            for achild in asegment.children:
-                ac_name, ac_long_name = ac_names(achild)
-
-                if ac_name.upper() not in IGNORE_SEG_FIELDS:
-                    field = parse_field(achild.value, name=achild.name)
-
-                    for fchild in field.children:
-                        if fchild.name.upper() not in IGNORE_COMPONENT_FIELDS:
-                            fc_name, fc_long_name = ac_names(fchild)
-                            field_name = f'{ac_name}_{ac_long_name}_{fc_name}_{fc_long_name}'
-
-                            if field_name not in IGNORE_FIELDS:
-                                data_dict[field_name] = fchild.value
         parsed_data.append(data_dict)
 
     return parsed_data
@@ -194,7 +200,7 @@ def df_to_jdbc(a_df, adtfeed):
     try:
         # mode("ingore") is just NOOP if table (or another sink) already exists
         #  and writing modes cannot be combined. If you're looking for something
-        #  like INSERT IGNORE or INSERT INTO ... WHERE NOT EXISTS ... 
+        #  like INSERT IGNORE or INSERT INTO ... WHERE NOT EXISTS ...
         #  you'll have to do it manually - so append it is
         a_df.write.jdbc(url, tablename, mode="append", properties=properties)
         print ("**** Stored data in table", tablename)
