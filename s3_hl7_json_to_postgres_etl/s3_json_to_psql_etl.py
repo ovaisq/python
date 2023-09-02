@@ -216,7 +216,7 @@ def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
 
     # process HL7 segments
     transformed = process_data(df_jsons, segments)
-    d_f = sparksession.createDataFrame(transformed)
+    d_f = sparksession.createDataFrame(spark.sparkContext.parallelize(transformed))
 
     df_transformed = rename_df_columns(d_f)
 
