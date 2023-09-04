@@ -34,6 +34,10 @@
             [aws]
             access.key=
             secret.key=
+            [constants]
+            IGNORE_SEG_FIELDS=['PID_1','PID_12','PV1_1','IN1_1','EVN_1','OBX_1','AL1_1','GT1_1','DG1_1']
+            IGNORE_COMPONENT_FIELDS=['CX_4','CX_5','XTN_2','XTN_3','XTN_5','XTN_6','XTN_7','XCN_4','XPN_3']
+            HL7_SEGMENTS=['pid','pv1','pv2','pd1','evn','in1','in2','obx','al1','gt1','zpv','dg1','nk1']
         8. List of fields to ignore stored in "hl7_field_names_to_ignore.txt" file
             Sample:
                 al1_1_set_id_al1_si_none_1
