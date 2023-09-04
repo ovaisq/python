@@ -14,7 +14,7 @@ from ast import literal_eval as make_tuple
 from datetime import datetime
 from hl7apy.parser import parse_segment, parse_field
 from pyspark.sql import SparkSession
-from pyspark.sql.utils import AnalysisException
+from pyspark.sql.utils import AnalysisException, ParseException
 
 # transformed fields to ignore
 with open('hl7_field_names_to_ignore.txt', encoding='utf-8') as afile:
@@ -43,7 +43,7 @@ def get_s3_jsons(sparksession, s3_full_path):
         a_d_f = sparksession.read.option("multiline","true") \
                 .json("s3a://" + s3_full_path).dropDuplicates()
         return a_d_f
-    except AnalysisException:
+    except (AnalysisException, ParseException):
         print ("Unable to read JSON files at", s3_full_path)
         sys.exit(-1)
 
