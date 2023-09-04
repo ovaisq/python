@@ -13,6 +13,7 @@ import time
 from ast import literal_eval as make_tuple
 from datetime import datetime
 from hl7apy.parser import parse_segment, parse_field
+from py4j.protocol import Py4JJavaError
 from pyspark.sql import SparkSession
 from pyspark.sql.utils import AnalysisException, ParseException
 
@@ -43,7 +44,7 @@ def get_s3_jsons(sparksession, s3_full_path):
         a_d_f = sparksession.read.option("multiline","true") \
                 .json("s3a://" + s3_full_path).dropDuplicates()
         return a_d_f
-    except (AnalysisException, ParseException):
+    except (AnalysisException, ParseException, Py4JJavaError):
         print ("Unable to read JSON files at", s3_full_path)
         sys.exit(-1)
 
