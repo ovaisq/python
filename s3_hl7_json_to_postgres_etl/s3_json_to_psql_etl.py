@@ -16,6 +16,7 @@ from hl7apy.parser import parse_segment, parse_field
 from py4j.protocol import Py4JJavaError
 from pyspark.sql import SparkSession
 from pyspark.sql.utils import AnalysisException, ParseException
+from pyspark.sql.types import StructType,StructField, StringType
 
 # transformed fields to ignore
 with open('hl7_field_names_to_ignore.txt', encoding='utf-8') as afile:
@@ -38,13 +39,26 @@ def read_config(file_path):
     return config_obj
 
 def get_s3_jsons(sparksession, s3_full_path):
-    """ get all jsons from
+    """ get all jsons
     """
+    # predefining schema saved ~15 mins!!
+    schema = StructType(
+                        [StructField("patientId", StringType(), True),
+                        StructField("tenantId", StringType(), True),
+                        StructField("dob", StringType(), True),
+                        StructField("id", StringType(), True),
+                        StructField("updatedAt", StringType(), True),
+                        StructField("createdAt", StringType(), True),
+                        StructField("visitNumber", StringType(), True),
+                        StructField("MSH", StringType(), True),
+                        StructField("EVN", StringType(), True),
+                        StructField("PID", StringType(), True),
+                        StructField("PV1", StringType(), True)]
+                       )
     try:
-        a_d_f = sparksession.read.option("multiline","true") \
-                .json("s3a://" + s3_full_path).dropDuplicates()
+        a_d_f = sparksession.read.json("s3a://" + s3_full_path, multiLine=True, schema=schema).dropDuplicates()
         return a_d_f
-    except (AnalysisException, ParseException, Py4JJavaError):
+    except (AnalysisException,ParseException, Py4JJavaError):
         print ("Unable to read JSON files at", s3_full_path)
         sys.exit(-1)
 
@@ -85,10 +99,9 @@ def process_hl7_segment(hl7_segment, json_dict, new_data_dict):
     except (KeyError, ValueError):
         return False
 
-def process_data(json_df, segments):
+def process_data(json_df, segments, sparksession):
     """process HL7 data
     """
-
     parsed_data = []
 
     for adict in json_df.collect():
@@ -104,7 +117,8 @@ def process_data(json_df, segments):
 
         parsed_data.append(data_dict)
 
-    return parsed_data
+    a_d_f = sparksession.createDataFrame(parsed_data)
+    return a_d_f
 
 def rename_df_columns(data_frame):
     """read (orig, new) tuples from a file into list of tuples
@@ -183,34 +197,33 @@ def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
 
     df_jsons = ''
     transformed = ''
-    df_transformed = ''
+    d_f = ''
 
-    df_jsons = get_s3_jsons(sparksession, s3bucketprefix)
-    df_jsons = lower_case_col_names(df_jsons)
+    d_f = get_s3_jsons(sparksession, s3bucketprefix)
+    d_f = lower_case_col_names(d_f)
 
     # process HL7 segments
-    transformed = process_data(df_jsons, segments)
-    d_f = sparksession.createDataFrame(transformed)
+    d_f = process_data(d_f, segments, sparksession)
 
-    df_transformed = rename_df_columns(d_f)
+    d_f = rename_df_columns(d_f)
 
-    df_transformed.createOrReplaceTempView("patients")
+    d_f.createOrReplaceTempView("patients")
     sql_query = "select * from patients where \
                 pt_address_state_prov in ('CA', 'OR', 'WA', 'ID', 'UT')"
     try:
-        df_transformed = sparksession.sql(sql_query)
+        d_f = sparksession.sql(sql_query)
     except AnalysisException as e_error:
         print ("Query Failed", e_error)
         sys.exit(-1)
 
     # don't go any further if DF is empty
-    if df_transformed.count() < 1:
-        print ('Skipping Empty dataframe',df_transformed.count())
+    if d_f.count() < 1:
+        print ('Skipping Empty dataframe',d_f.count())
         sys.exit(-1)
 
-    df_transformed = truncate_col_name(df_transformed)
-    df_to_jdbc(df_transformed, adtfeedname)
-    df_transformed = ''
+    d_f = truncate_col_name(d_f)
+    df_to_jdbc(d_f, adtfeedname)
+    d_f = ''
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser(description="Process JSON to PostgreSQL")
@@ -233,7 +246,7 @@ if __name__ == "__main__":
                             )
 
     args = arg_parser.parse_args()
- 
+
     # since I had to deal with several adt feeds, I chose to
     #  do it this way.
     adt_feed_name = args.adt_feed_name
@@ -256,9 +269,9 @@ if __name__ == "__main__":
              .config("spark.executor.memory", "14g")
              .config("spark.executor.cores", "4")
              .config("spark.task.cpus", "4")
-             .config("spark.sql.debug.maxToStringFields", "25")
              .config("spark.hadoop.fs.s3a.access.key", aws_access_key)
              .config("spark.hadoop.fs.s3a.secret.key", aws_secret_key)
+             .config("spark.debug.maxToStringFields","100")
              .config("spark.jars",
                         "/var/tmp/sparkjars/postgresql-42.6.0.jar,\
                          /var/tmp/sparkjars/aws-java-sdk-bundle-1.12.262.jar,\
