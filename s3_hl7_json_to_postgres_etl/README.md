@@ -112,7 +112,7 @@
           "PV1": "PV1|||WBVCERDA^ED07^07^WBVC^^^WBVC^^WBVC EMERGENCY||||||||||||||||128988888"
         }
 
-## Sample PostgreSQL table - (Note: JDBC writer does not insert if data already exists):
+## Sample PostgreSQL table:
                       Column              | Type | Collation | Nullable | Default | Storage  |
         ----------------------------------+------+-----------+----------+---------+----------+
          dob                              | text |           |          |         | extended |
