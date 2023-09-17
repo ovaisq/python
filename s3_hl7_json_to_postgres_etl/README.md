@@ -162,7 +162,7 @@ The read size was only limited by the available RAM of the EC2 instance.
 
 ## Ideal Implementation
 
-Since this has been my very first excursion with procession HL7 data from ADT feeds, now that I
-have learned quite a lot, my final implementation would looking something like this
+Since this has been my very first experience with processing HL7 data from ADT feeds, now that I have 
+learned quite a lot, my final implementation would look something like this.
 
 ![Final Implementation](final-phase.png)
