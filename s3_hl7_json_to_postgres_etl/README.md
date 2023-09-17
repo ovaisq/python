@@ -165,4 +165,4 @@ The read size was only limited by the available RAM of the EC2 instance.
 Since this has been my very first excursion with procession HL7 data from ADT feeds, now that I
 have learned quite a lot, my final implementation would looking something like this
 
-![Final Implementation](final_phase.png)
+![Final Implementation](final-phase.png)
