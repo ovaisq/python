@@ -145,3 +145,6 @@
          pt_loc_facility_1                | text |           |          |         | extended |
          pt_loc_description               | text |           |          |         | extended |
          pt_event_occur_date_time         | text |           |          |         | extended |
+
+## Phase 1 Workflow
+![To make sense of data that has sat there for years](etl-phase1.png)
