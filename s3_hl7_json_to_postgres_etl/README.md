@@ -147,4 +147,15 @@
          pt_event_occur_date_time         | text |           |          |         | extended |
 
 ## Phase 1 Workflow
+To catch up with over one billion rows (equivalent to three years' worth of raw data) in a MySQL 
+Database and to facilitate the ingestion and processing of a large number of JSON files, I 
+converted the rows into JSON files and stored each file in an S3 bucket as well as in the 
+RedisJSON document store. The S3 bucket serves as permanent storage, while RedisJSON, due to its 
+significantly faster read capabilities, was utilized for reading and processing tens of 
+thousands of files simultaneously. Despite the initial cost of writing to both S3 and RedisJSON 
+with over one billion rows, the reads, when comparing Python Boto3 with Python Redis, from RedisJSON 
+were exceptionally fast (`.8` second for `Boto3`, vs `.007` seconds for `PyRedis` for a `3kb` file). 
+The read size was only limited by the available RAM of the EC2 instance.
+
+
 ![To make sense of data that has sat there for years](etl-phase1.png)
