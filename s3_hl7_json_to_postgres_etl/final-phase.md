@@ -10,10 +10,12 @@ flowchart LR
     py -- JSON --> s3["AWS S3"]
     py -- "Failed Messages" --> dlq["AWS SQS
     DLQ"]
-    py  --> F["PostgreSQL"]
+    py  --> F["PySpark
+    Dataframe"]
+    F --> G["PostgreSQL"]
     L["New Patient 
     Referral List
     Dashboard
-    (Looker Studio)"] -- SQL Query --> F
+    (Looker Studio)"] -- SQL Query --> G
     end
 ```
