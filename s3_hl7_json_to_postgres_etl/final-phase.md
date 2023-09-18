@@ -10,7 +10,7 @@ flowchart LR
     py -- JSON --> s3["AWS S3"]
     py -- "Failed Messages" --> dlq["AWS SQS
     DLQ"]
-    s3  --> F["PostgreSQL"]
+    py  --> F["PostgreSQL"]
     L["New Patient 
     Referral List
     Dashboard
