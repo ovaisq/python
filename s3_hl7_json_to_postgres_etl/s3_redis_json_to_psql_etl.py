@@ -136,9 +136,10 @@ def process_data(json_df, segments, sparksession):
     """
     parsed_data = []
 
-    print ('**** Start Process ****')
-    json_df.repartition(1)
-    for adict in json_df.collect():
+    print ('**** Start Processing ****')
+    json_df.cache()
+    dicts = json_df.toPandas().to_dict('records')
+    for adict in dicts:
         data_dict = {
             'patientid': adict['patientid'],
             'dob': adict['dob']
