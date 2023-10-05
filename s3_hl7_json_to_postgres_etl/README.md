@@ -1,6 +1,8 @@
 ## Script that processes HL7 data from JSON files stored in S3 buckets and stores the transformed/processed data in PostgreSQL schema.
 
 ## Requires:
+        Use create_sample_data.py to generate anonymized sample data
+
         1. Apache Spark Standalone or Cluster (3.4.1 or later)
             I set up a Standalone Spark Master with 5 worker nodes
             https://spark.apache.org/downloads.html
@@ -105,8 +107,9 @@
         **** Process HL7 ****
         **** Start Process ****
 
-## Example RedisJSON Key Names:
-![RedisJSON](redis_json_key_sample.png)
+## Example RedisJSON:
+![RedisJSON Key Names](redis_json_key_name_sample.png)
+![RedisJSON Key Content](redis_json_example.png) - Anonymized
 
 ## Example table names:
          public | v4_acme       | table |
