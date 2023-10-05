@@ -275,9 +275,9 @@ if __name__ == "__main__":
 
 
     # can pass more than one name
-    for adt_feed_name in adt_feed_name.split(','):
-        print ("**** Starting for", adt_feed_name)
-        df_etl(spark, adt_feed_name, HL7_SEGMENTS, s3_bucket_full_path)
-        print ("**** Completed for", adt_feed_name)
+    for adt_feed in adt_feed_name.split(','):
+        print ("**** Starting for", adt_feed)
+        df_etl(spark, adt_feed, HL7_SEGMENTS, s3_bucket_full_path)
+        print ("**** Completed for", adt_feed)
 
     spark.stop()
