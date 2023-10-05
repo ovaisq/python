@@ -64,6 +64,11 @@ def get_s3_jsons(sparksession, s3_full_path):
         sys.exit(-1)
 
 def get_redis_jsons(redishost, redisport):
+    """Read JSON files from RedisJSON doc store
+        expects key names starting with "pid_"
+
+        Tested this against RedisJSON/Redis-Stack-Server v7.2.0
+    """
 
     jsons = []
 
