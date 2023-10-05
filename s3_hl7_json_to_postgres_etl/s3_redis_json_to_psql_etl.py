@@ -8,6 +8,7 @@
 import ast
 import argparse
 import configparser
+import redis
 import sys
 import time
 from ast import literal_eval as make_tuple
@@ -62,6 +63,37 @@ def get_s3_jsons(sparksession, s3_full_path):
         print ("Unable to read JSON files at", s3_full_path)
         sys.exit(-1)
 
+def get_redis_jsons(redishost, redisport):
+
+    jsons = []
+
+    R = redis.Redis(host=redishost, port=redisport, decode_responses=True)
+
+    # predefining schema saved ~15 mins!!
+    schema = StructType(
+                        [StructField("patientId", StringType(), True),
+                        StructField("tenantId", StringType(), True),
+                        StructField("dob", StringType(), True),
+                        StructField("id", StringType(), True),
+                        StructField("updatedAt", StringType(), True),
+                        StructField("createdAt", StringType(), True),
+                        StructField("visitNumber", StringType(), True),
+                        StructField("MSH", StringType(), True),
+                        StructField("EVN", StringType(), True),
+                        StructField("PID", StringType(), True),
+                        StructField("PV1", StringType(), True)]
+                       )
+
+    json_keys = list(R.scan_iter('pid_*'))
+    for ajson in json_keys:
+        a_json = R.json().get(ajson)
+        jsons.append(a_json)
+
+    adf = spark.read.json(spark.sparkContext.parallelize(jsons,numSlices=840) \
+            , multiLine=True, schema=schema).dropDuplicates()
+
+    return adf
+
 def assign_child_name(sgchild):
     """ assign child names
     """
@@ -99,6 +131,8 @@ def process_data(json_df, segments, sparksession):
     """
     parsed_data = []
 
+    print ('**** Start Process ****')
+    json_df.repartition(1)
     for adict in json_df.collect():
         data_dict = {
             'patientid': adict['patientid'],
@@ -111,7 +145,8 @@ def process_data(json_df, segments, sparksession):
             data_dict = process_hl7_segment(s_g, adict, data_dict)
 
         parsed_data.append(data_dict)
-    print ('**** Create DF ****')
+
+    print ('**** Creating DF ****')
     a_d_f = sparksession.createDataFrame(parsed_data)
     return a_d_f
 
@@ -190,22 +225,27 @@ def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
     """Apache Spark Magic happens here
     """
 
-    df_jsons = ''
-    transformed = ''
     d_f = ''
 
-    d_f = get_s3_jsons(sparksession, s3bucketprefix)
+    #d_f = get_s3_jsons(sparksession, s3bucketprefix)
+    print ('**** Get Redis Jsons ****')
+    d_f = get_redis_jsons(redis_host, redis_port)
+    print ('**** Lower Case Colunmn Names ****')
     d_f = lower_case_col_names(d_f)
 
     # process HL7 segments
+    print ('**** Process HL7 ****')
     d_f = process_data(d_f, segments, sparksession)
 
+    print ('**** Rename Column Names ****')
     d_f = rename_df_columns(d_f)
 
+    print ('**** Create View ****')
     d_f.createOrReplaceTempView("patients")
     sql_query = "select * from patients where \
                 pt_address_state_prov in ('CA', 'OR', 'WA', 'ID', 'UT')"
     try:
+        print ('**** Run Spark SQL ****')
         d_f = sparksession.sql(sql_query)
     except AnalysisException as e_error:
         print ("Query Failed", e_error)
@@ -216,7 +256,9 @@ def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
         print ('Skipping Empty dataframe',d_f.count())
         sys.exit(-1)
 
+    print ('**** Truncate Column Names ****')
     d_f = truncate_col_name(d_f)
+    print ('**** Create PostgreSQL Table ****')
     df_to_jdbc(d_f, adtfeedname)
     d_f = ''
 
@@ -235,8 +277,8 @@ if __name__ == "__main__":
                              '--s3-bucket-prefix',
                              dest='s3_bucket_prefix',
                              action='store',
-                             default='',
-                             required=True,
+                             default='none',
+                             required=False,
                              help="Full path - <bucket-name>/prefix/",
                             )
 
@@ -252,6 +294,8 @@ if __name__ == "__main__":
     spark_master_port = config.get('spark', 'masterport')
     aws_access_key = config.get('aws','access.key')
     aws_secret_key = config.get('aws','secret.key')
+    redis_host = config.get('redis','host')
+    redis_port = config.get('redis','port')
 
     # Constants
     IGNORE_SEG_FIELDS = ast.literal_eval(config.get('constants','IGNORE_SEG_FIELDS'))
@@ -262,11 +306,12 @@ if __name__ == "__main__":
              .appName('adt_feed' + '_' + adt_feed_name + '_' + str(int(time.time())))
              .master(f"spark://{spark_master}:{spark_master_port}")
              .config("spark.executor.memory", "14g")
+             .config("spark.driver.memory","14g")
              .config("spark.executor.cores", "4")
              .config("spark.task.cpus", "4")
              .config("spark.hadoop.fs.s3a.access.key", aws_access_key)
              .config("spark.hadoop.fs.s3a.secret.key", aws_secret_key)
-             .config("spark.debug.maxToStringFields","1000")
+             .config("spark.debug.maxToStringFields","200")
              .config("spark.jars",
                         "/var/tmp/sparkjars/postgresql-42.6.0.jar,\
                          /var/tmp/sparkjars/aws-java-sdk-bundle-1.12.262.jar,\
@@ -275,9 +320,9 @@ if __name__ == "__main__":
 
 
     # can pass more than one name
-    for adt_feed_name in adt_feed_name.split(','):
-        print ("**** Starting for", adt_feed_name)
-        df_etl(spark, adt_feed_name, HL7_SEGMENTS, s3_bucket_full_path)
-        print ("**** Completed for", adt_feed_name)
+    for adt_feed in adt_feed_name.split(','):
+        print ("**** Starting for", adt_feed)
+        df_etl(spark, adt_feed, HL7_SEGMENTS, s3_bucket_full_path)
+        print ("**** Completed for", adt_feed)
 
     spark.stop()
