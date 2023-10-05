@@ -94,7 +94,6 @@
         **** Completed for roadrunner
 
 ## How-to Run - RedisJSON:
-        ![RedisJSON Keys](redis_json_key_sample.png)
         >./s3_redis_json_to_psql_etl.py --adt-feed-name redis_$(date '+%s')
 
         23/10/05 10:22:27 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
@@ -105,7 +104,8 @@
         **** Lower Case Colunmn Names ****
         **** Process HL7 ****
         **** Start Process ****
-
+## Example RedisJSON Key Names:
+        ![RedisJSON](redis_json_key_sample.png)
 ## Example table names:
          public | v4_acme       | table |
          public | v4_roadrunner | table |
