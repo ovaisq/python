@@ -104,8 +104,10 @@
         **** Lower Case Colunmn Names ****
         **** Process HL7 ****
         **** Start Process ****
+
 ## Example RedisJSON Key Names:
-        ![RedisJSON](redis_json_key_sample.png)
+![RedisJSON](redis_json_key_sample.png)
+
 ## Example table names:
          public | v4_acme       | table |
          public | v4_roadrunner | table |
