@@ -108,7 +108,9 @@
         **** Start Process ****
 
 ## Example RedisJSON:
+Sample RedisJSON Key Names:
 ![RedisJSON Key Names](redis_json_key_name_sample.png)
+Sample RedisJSON Key Content:
 ![RedisJSON Key Content - Anonymized](redis_json_example.png)
 
 ## Example table names:
