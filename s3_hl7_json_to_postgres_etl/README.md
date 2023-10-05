@@ -1,6 +1,6 @@
-## Script that processes HL7 data from JSON files stored in S3 buckets and stores the transformed/processed data in PostgreSQL schema.
+### Script that processes HL7 data from JSON files stored in S3 buckets and stores the transformed/processed data in PostgreSQL schema.
 
-## Requires:
+### Requires:
         Use create_sample_data.py to generate anonymized sample data
 
         1. Apache Spark Standalone or Cluster (3.4.1 or later)
@@ -77,7 +77,7 @@
                 ('pid_5_patient_name_xpn_1_family_name','pt_last_name')
 
 
-## How-to Run - S3:
+### How-to Run - S3:
         >./s3_json_to_psql_etl.py --adt-feed-name "acme,roadrunner" --s3-bucket-prefix <s3 bucket full prefix/path>/*.json
 
         23/09/02 16:15:08 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
@@ -95,7 +95,7 @@
         **** Stored data in table v4_roadrunner
         **** Completed for roadrunner
 
-## How-to Run - RedisJSON:
+### How-to Run - RedisJSON:
         >./s3_redis_json_to_psql_etl.py --adt-feed-name redis_$(date '+%s')
 
         23/10/05 10:22:27 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
@@ -107,17 +107,17 @@
         **** Process HL7 ****
         **** Start Process ****
 
-## Example RedisJSON:
+### Example RedisJSON:
 Sample RedisJSON Key Names:
 ![RedisJSON Key Names](redis_json_key_name_sample.png)
 Sample RedisJSON Key Content:
 ![RedisJSON Key Content - Anonymized](redis_json_example.png)
 
-## Example table names:
+### Example table names:
          public | v4_acme       | table |
          public | v4_roadrunner | table |
 
-## Sample JSON file:
+### Sample JSON file:
         {
           "patientId": "123456789",
           "tenantId": "<tenant id>",
@@ -132,7 +132,7 @@ Sample RedisJSON Key Content:
           "PV1": "PV1|||WBVCERDA^ED07^07^WBVC^^^WBVC^^WBVC EMERGENCY||||||||||||||||128988888"
         }
 
-## Sample PostgreSQL table:
+### Sample PostgreSQL table:
                       Column              | Type | Collation | Nullable | Default | Storage  |
         ----------------------------------+------+-----------+----------+---------+----------+
          dob                              | text |           |          |         | extended |
@@ -166,7 +166,7 @@ Sample RedisJSON Key Content:
          pt_loc_description               | text |           |          |         | extended |
          pt_event_occur_date_time         | text |           |          |         | extended |
 
-## Phase 1 Workflow
+### Phase 1 Workflow
 To catch up with over one billion rows (equivalent to three years' worth of raw data) in a MySQL 
 Database and to facilitate the ingestion and processing of a large number of JSON files, I 
 converted the rows into JSON files and stored each file in an S3 bucket as well as in the 
@@ -180,7 +180,7 @@ The read size was only limited by the available RAM of the EC2 instance.
 
 ![To make sense of data that has sat there for years](etl-phase1.png)
 
-## Ideal Implementation
+### Ideal Implementation
 
 Since this has been my very first experience with processing HL7 data from ADT feeds, now that I have 
 learned quite a lot, my final implementation would look something like this.
