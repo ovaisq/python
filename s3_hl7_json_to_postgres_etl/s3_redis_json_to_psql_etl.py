@@ -25,7 +25,11 @@ from pyspark.sql.types import StructType,StructField, StringType
 with open('hl7_field_names_to_ignore.txt', encoding='utf-8') as afile:
     IGNORE_FIELDS = [line.rstrip('\n') for line in afile]
 
+# Constants
 STATES = ['CA', 'OR', 'WA', 'ID', 'UT']
+IGNORE_SEG_FIELDS = ast.literal_eval(config.get('constants','IGNORE_SEG_FIELDS'))
+IGNORE_COMPONENT_FIELDS = ast.literal_eval(config.get('constants','IGNORE_COMPONENT_FIELDS'))
+HL7_SEGMENTS = ast.literal_eval(config.get('constants','HL7_SEGMENTS'))
 
 # predefining schema saved ~15 mins!!
 DF_SCHEMA = StructType(
@@ -95,6 +99,17 @@ def get_redis_jsons(redishost, redisport):
 
     return adf
 
+def df_to_dict_batches(json_df):
+    """Break list of dicts into smaller chunks
+        speeds up data processing
+    """
+
+    logging.info('**** Json DF to Dict  ****')
+    dicts = json_df.toPandas().to_dict('records')
+    dicts_batches = numpy.array_split(dicts, 100)
+
+    return dicts_batches
+
 def assign_child_name(sgchild):
     """ assign child names
     """
@@ -126,17 +141,6 @@ def process_hl7_segment(hl7_segment, json_dict, new_data_dict):
             return new_data_dict
     except (KeyError, ValueError):
         return False
-
-def df_to_dict_batches(json_df):
-    """Break list of dicts into smaller chunks
-        speeds up data processing
-    """
-
-    logging.info('**** Json DF to Dict  ****')
-    dicts = json_df.toPandas().to_dict('records')
-    dicts_batches = numpy.array_split(dicts, 50)
-
-    return dicts_batches
 
 def process_data(dict_batch, segments, sparksession):
     """process HL7 data
@@ -317,11 +321,6 @@ if __name__ == "__main__":
     aws_secret_key = config.get('aws','secret.key')
     redis_host = config.get('redis','host')
     redis_port = config.get('redis','port')
-
-    # Constants
-    IGNORE_SEG_FIELDS = ast.literal_eval(config.get('constants','IGNORE_SEG_FIELDS'))
-    IGNORE_COMPONENT_FIELDS = ast.literal_eval(config.get('constants','IGNORE_COMPONENT_FIELDS'))
-    HL7_SEGMENTS = ast.literal_eval(config.get('constants','HL7_SEGMENTS'))
 
     spark = (SparkSession.builder
              .appName('adt_feed' + '_' + adt_feed_name + '_' + str(int(time.time())))
