@@ -8,6 +8,8 @@
 import ast
 import argparse
 import configparser
+import logging
+import numpy
 import redis
 import sys
 import time
@@ -22,6 +24,21 @@ from pyspark.sql.types import StructType,StructField, StringType
 # transformed fields to ignore
 with open('hl7_field_names_to_ignore.txt', encoding='utf-8') as afile:
     IGNORE_FIELDS = [line.rstrip('\n') for line in afile]
+
+# predefining schema saved ~15 mins!!
+DF_SCHEMA = StructType(
+					[StructField("patientId", StringType(), True),
+					StructField("tenantId", StringType(), True),
+					StructField("dob", StringType(), True),
+					StructField("id", StringType(), True),
+					StructField("updatedAt", StringType(), True),
+					StructField("createdAt", StringType(), True),
+					StructField("visitNumber", StringType(), True),
+					StructField("MSH", StringType(), True),
+					StructField("EVN", StringType(), True),
+					StructField("PID", StringType(), True),
+					StructField("PV1", StringType(), True)]
+				   )
 
 def date_to_prefix():
     """for lambda version - use this prefix to pick most recent
@@ -42,22 +59,8 @@ def read_config(file_path):
 def get_s3_jsons(sparksession, s3_full_path):
     """ get all jsons
     """
-    # predefining schema saved ~15 mins!!
-    schema = StructType(
-                        [StructField("patientId", StringType(), True),
-                        StructField("tenantId", StringType(), True),
-                        StructField("dob", StringType(), True),
-                        StructField("id", StringType(), True),
-                        StructField("updatedAt", StringType(), True),
-                        StructField("createdAt", StringType(), True),
-                        StructField("visitNumber", StringType(), True),
-                        StructField("MSH", StringType(), True),
-                        StructField("EVN", StringType(), True),
-                        StructField("PID", StringType(), True),
-                        StructField("PV1", StringType(), True)]
-                       )
     try:
-        a_d_f = sparksession.read.json("s3a://" + s3_full_path, multiLine=True, schema=schema).dropDuplicates()
+        a_d_f = sparksession.read.json("s3a://" + s3_full_path, multiLine=True, schema=DF_SCHEMA).dropDuplicates()
         return a_d_f
     except (AnalysisException,ParseException, Py4JJavaError):
         print ("Unable to read JSON files at", s3_full_path)
@@ -74,28 +77,16 @@ def get_redis_jsons(redishost, redisport):
 
     R = redis.Redis(host=redishost, port=redisport, decode_responses=True)
 
-    # predefining schema saved ~15 mins!!
-    schema = StructType(
-                        [StructField("patientId", StringType(), True),
-                        StructField("tenantId", StringType(), True),
-                        StructField("dob", StringType(), True),
-                        StructField("id", StringType(), True),
-                        StructField("updatedAt", StringType(), True),
-                        StructField("createdAt", StringType(), True),
-                        StructField("visitNumber", StringType(), True),
-                        StructField("MSH", StringType(), True),
-                        StructField("EVN", StringType(), True),
-                        StructField("PID", StringType(), True),
-                        StructField("PV1", StringType(), True)]
-                       )
-
-    json_keys = list(R.scan_iter('pid_*'))
+    #get keys as list
+    search_for = 'pid_1*'
+    logging.info('**** Getting following RedisJSON keys: ' + search_for + ' ****')
+    json_keys = list(R.scan_iter(search_for))
     for ajson in json_keys:
         a_json = R.json().get(ajson)
         jsons.append(a_json)
 
     adf = spark.read.json(spark.sparkContext.parallelize(jsons,numSlices=840) \
-            , multiLine=True, schema=schema).dropDuplicates()
+            , multiLine=True, schema=DF_SCHEMA).dropDuplicates()
 
     return adf
 
@@ -131,15 +122,23 @@ def process_hl7_segment(hl7_segment, json_dict, new_data_dict):
     except (KeyError, ValueError):
         return False
 
-def process_data(json_df, segments, sparksession):
+def df_to_dict_batches(json_df):
+    """Break list of dicts into smaller chunks
+        speeds up data processing
+    """
+
+    logging.info('**** Json DF to Dict  ****')
+    dicts = json_df.toPandas().to_dict('records')
+    dicts_batches = numpy.array_split(dicts, 50)
+    return dicts_batches
+
+def process_data(dict_batch, segments, sparksession):
     """process HL7 data
     """
     parsed_data = []
 
-    print ('**** Start Processing ****')
-    json_df.cache()
-    dicts = json_df.toPandas().to_dict('records')
-    for adict in dicts:
+    logging.info('**** Start Processing HL7 ****')
+    for adict in dict_batch:
         data_dict = {
             'patientid': adict['patientid'],
             'dob': adict['dob']
@@ -152,8 +151,9 @@ def process_data(json_df, segments, sparksession):
 
         parsed_data.append(data_dict)
 
-    print ('**** Creating DF ****')
+    logging.info('**** Creating DF ****')
     a_d_f = sparksession.createDataFrame(parsed_data)
+
     return a_d_f
 
 def rename_df_columns(data_frame):
@@ -180,9 +180,9 @@ def truncate_col_name(a_df):
     for col_name in a_df.columns:
         size_bytes = len(col_name.encode('utf-8'))
         if size_bytes > 63:
-            print ('Long column name',col_name)
+            logging.info('Long column name '+col_name)
             truncated  = col_name[:62]
-            print ('Truncated column name',truncated)
+            logging.info('Truncated column name'+truncated)
             a_df = a_df.withColumnRenamed(col_name, truncated)
     return a_df
 
@@ -221,10 +221,10 @@ def df_to_jdbc(a_df, adtfeed):
         #  like INSERT IGNORE or INSERT INTO ... WHERE NOT EXISTS ...
         #  you'll have to do it manually - so append it is
         a_df.write.jdbc(url, tablename, mode="append", properties=properties)
-        print ("**** Stored data in table", tablename)
+        logging.info("**** Stored data in table "+ tablename)
         return True
     except AnalysisException as e_error:
-        print (e_error)
+        logging.error(e_error)
         sys.exit(-1)
 
 def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
@@ -234,41 +234,45 @@ def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
     d_f = ''
 
     #d_f = get_s3_jsons(sparksession, s3bucketprefix)
-    print ('**** Get Redis Jsons ****')
+    logging.info('**** Get Redis Jsons ****')
     d_f = get_redis_jsons(redis_host, redis_port)
-    print ('**** Lower Case Colunmn Names ****')
+    logging.info('**** Lower Case Colunmn Names ****')
     d_f = lower_case_col_names(d_f)
 
     # process HL7 segments
-    print ('**** Process HL7 ****')
-    d_f = process_data(d_f, segments, sparksession)
+    logging.info('**** Process HL7 ****')
+    dict_batches = df_to_dict_batches(d_f)
+    for dict_batch in dict_batches:
+        d_f = process_data(dict_batch, segments, sparksession)
 
-    print ('**** Rename Column Names ****')
-    d_f = rename_df_columns(d_f)
+        logging.info('**** Rename Column Names ****')
+        d_f = rename_df_columns(d_f)
 
-    print ('**** Create View ****')
-    d_f.createOrReplaceTempView("patients")
-    sql_query = "select * from patients where \
-                pt_address_state_prov in ('CA', 'OR', 'WA', 'ID', 'UT')"
-    try:
-        print ('**** Run Spark SQL ****')
-        d_f = sparksession.sql(sql_query)
-    except AnalysisException as e_error:
-        print ("Query Failed", e_error)
-        sys.exit(-1)
+        logging.info('**** Create View ****')
+        d_f.createOrReplaceTempView("patients")
+        sql_query = "select * from patients where \
+                    pt_address_state_prov in ('CA', 'OR', 'WA', 'ID', 'UT')"
+        try:
+            logging.info('**** Run Spark SQL ****')
+            d_f = sparksession.sql(sql_query)
+        except AnalysisException as e_error:
+            logging.error("Query Failed "+ e_error)
+            sys.exit(-1)
 
-    # don't go any further if DF is empty
-    if d_f.count() < 1:
-        print ('Skipping Empty dataframe',d_f.count())
-        sys.exit(-1)
+        # don't go any further if DF is empty
+        if d_f.count() < 1:
+            logging.error('Skipping Empty dataframe '+d_f.count())
+            sys.exit(-1)
 
-    print ('**** Truncate Column Names ****')
-    d_f = truncate_col_name(d_f)
-    print ('**** Create PostgreSQL Table ****')
-    df_to_jdbc(d_f, adtfeedname)
-    d_f = ''
+        logging.info('**** Truncate Column Names ****')
+        d_f = truncate_col_name(d_f)
+        logging.info('**** Create PostgreSQL Table ****')
+        df_to_jdbc(d_f, adtfeedname)
+        d_f = ''
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO,format='%(asctime)s %(message)s',\
+            handlers=[logging.StreamHandler(sys.stdout)])
     arg_parser = argparse.ArgumentParser(description="Process JSON to PostgreSQL")
     arg_parser.add_argument (
                              '--adt-feed-name',
@@ -327,8 +331,8 @@ if __name__ == "__main__":
 
     # can pass more than one name
     for adt_feed in adt_feed_name.split(','):
-        print ("**** Starting for", adt_feed)
+        logging.info("**** Starting for " + adt_feed)
         df_etl(spark, adt_feed, HL7_SEGMENTS, s3_bucket_full_path)
-        print ("**** Completed for", adt_feed)
+        logging.info("**** Completed for " + adt_feed)
 
     spark.stop()
