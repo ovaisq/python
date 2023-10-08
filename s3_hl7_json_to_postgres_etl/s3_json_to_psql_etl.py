@@ -180,7 +180,7 @@ def df_to_jdbc(a_df, adtfeed):
         #  like INSERT IGNORE or INSERT INTO ... WHERE NOT EXISTS ...
         #  you'll have to do it manually - so append it is
         a_df.write.jdbc(url, tablename, mode="append", properties=properties)
-        print ("**** Stored data in table", tablename)
+        print ("**** Stored data in table "+ tablename)
         return True
     except AnalysisException as e_error:
         print (e_error)
