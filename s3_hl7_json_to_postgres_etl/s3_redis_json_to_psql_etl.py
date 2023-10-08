@@ -78,9 +78,12 @@ def get_redis_jsons(redishost, redisport):
     R = redis.Redis(host=redishost, port=redisport, decode_responses=True)
 
     #get keys as list
-    search_for = 'pid_1*'
+    search_for = 'pid_*'
+
     logging.info('**** Getting following RedisJSON keys: ' + search_for + ' ****')
+
     json_keys = list(R.scan_iter(search_for))
+
     for ajson in json_keys:
         a_json = R.json().get(ajson)
         jsons.append(a_json)
@@ -138,7 +141,9 @@ def process_data(dict_batch, segments, sparksession):
     parsed_data = []
 
     logging.info('**** Start Processing HL7 ****')
+
     for adict in dict_batch:
+
         data_dict = {
             'patientid': adict['patientid'],
             'dob': adict['dob']
@@ -236,12 +241,15 @@ def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
     #d_f = get_s3_jsons(sparksession, s3bucketprefix)
     logging.info('**** Get Redis Jsons ****')
     d_f = get_redis_jsons(redis_host, redis_port)
+
     logging.info('**** Lower Case Colunmn Names ****')
     d_f = lower_case_col_names(d_f)
 
     # process HL7 segments
     logging.info('**** Process HL7 ****')
+
     dict_batches = df_to_dict_batches(d_f)
+
     for dict_batch in dict_batches:
         d_f = process_data(dict_batch, segments, sparksession)
 
@@ -250,6 +258,7 @@ def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
 
         logging.info('**** Create View ****')
         d_f.createOrReplaceTempView("patients")
+
         sql_query = "select * from patients where \
                     pt_address_state_prov in ('CA', 'OR', 'WA', 'ID', 'UT')"
         try:
