@@ -21,15 +21,13 @@ from pyspark.sql import SparkSession
 from pyspark.sql.utils import AnalysisException, ParseException
 from pyspark.sql.types import StructType,StructField, StringType
 
+
 # transformed fields to ignore
 with open('hl7_field_names_to_ignore.txt', encoding='utf-8') as afile:
     IGNORE_FIELDS = [line.rstrip('\n') for line in afile]
 
 # Constants
 STATES = ['CA', 'OR', 'WA', 'ID', 'UT']
-IGNORE_SEG_FIELDS = ast.literal_eval(config.get('constants','IGNORE_SEG_FIELDS'))
-IGNORE_COMPONENT_FIELDS = ast.literal_eval(config.get('constants','IGNORE_COMPONENT_FIELDS'))
-HL7_SEGMENTS = ast.literal_eval(config.get('constants','HL7_SEGMENTS'))
 
 # predefining schema saved ~15 mins!!
 DF_SCHEMA = StructType(
@@ -250,19 +248,19 @@ def filtered_df (unfiltered_df, spark_session):
     """Fileter rows
     """
 
-        logging.info('**** Filtering Data ***')
-        logging.info('**** Createing Temp View: patients  ****')
-        unfiltered_df.createOrReplaceTempView('patients')
+    logging.info('**** Filtering Data ***')
+    logging.info('**** Createing Temp View: patients  ****')
+    unfiltered_df.createOrReplaceTempView('patients')
 
-        sql_query = "select * from patients where \
-                    pt_address_state_prov in ('CA', 'OR', 'WA', 'ID', 'UT')"
-        try:
-            logging.info('**** Running Spark SQL: patients ****')
-            filtered_df = spark_session.sql(sql_query)
-        except AnalysisException as e_error:
-            logging.error('Query Failed ' + e_error)
-            sys.exit(-1)
-        return filtered_df
+    sql_query = "select * from patients where \
+                pt_address_state_prov in ('CA', 'OR', 'WA', 'ID', 'UT')"
+    try:
+        logging.info('**** Running Spark SQL: patients ****')
+        filtered_df = spark_session.sql(sql_query)
+    except AnalysisException as e_error:
+        logging.error('Query Failed ' + e_error)
+        sys.exit(-1)
+    return filtered_df
 
 def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
     """Apache Spark Magic happens here
@@ -288,6 +286,19 @@ def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,format='%(asctime)s %(message)s',\
             handlers=[logging.StreamHandler(sys.stdout)])
+
+    config = read_config('etl.config')
+    spark_master = config.get('spark', 'master')
+    spark_master_port = config.get('spark', 'masterport')
+    aws_access_key = config.get('aws','access.key')
+    aws_secret_key = config.get('aws','secret.key')
+    redis_host = config.get('redis','host')
+    redis_port = config.get('redis','port')
+
+    IGNORE_SEG_FIELDS = ast.literal_eval(config.get('constants','IGNORE_SEG_FIELDS'))
+    IGNORE_COMPONENT_FIELDS = ast.literal_eval(config.get('constants','IGNORE_COMPONENT_FIELDS'))
+    HL7_SEGMENTS = ast.literal_eval(config.get('constants','HL7_SEGMENTS'))
+
     arg_parser = argparse.ArgumentParser(description='Process JSON to PostgreSQL')
     arg_parser.add_argument (
                              '--adt-feed-name',
@@ -314,13 +325,6 @@ if __name__ == "__main__":
     adt_feed_name = args.adt_feed_name
     s3_bucket_full_path = args.s3_bucket_prefix
 
-    config = read_config('etl.config')
-    spark_master = config.get('spark', 'master')
-    spark_master_port = config.get('spark', 'masterport')
-    aws_access_key = config.get('aws','access.key')
-    aws_secret_key = config.get('aws','secret.key')
-    redis_host = config.get('redis','host')
-    redis_port = config.get('redis','port')
 
     spark = (SparkSession.builder
              .appName('adt_feed' + '_' + adt_feed_name + '_' + str(int(time.time())))
