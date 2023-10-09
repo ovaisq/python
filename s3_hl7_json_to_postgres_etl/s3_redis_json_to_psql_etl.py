@@ -10,6 +10,7 @@ import argparse
 import configparser
 import logging
 import numpy
+import psycopg2
 import redis
 import sys
 import time
@@ -28,21 +29,6 @@ with open('hl7_field_names_to_ignore.txt', encoding='utf-8') as afile:
 
 # Constants
 STATES = ['CA', 'OR', 'WA', 'ID', 'UT']
-
-# predefining schema saved ~15 mins!!
-DF_SCHEMA = StructType(
-					[StructField('patientId', StringType(), True),
-					StructField('tenantId', StringType(), True),
-					StructField('dob', StringType(), True),
-					StructField('id', StringType(), True),
-					StructField('updatedAt', StringType(), True),
-					StructField('createdAt', StringType(), True),
-					StructField('visitNumber', StringType(), True),
-					StructField('MSH', StringType(), True),
-					StructField('EVN', StringType(), True),
-					StructField('PID', StringType(), True),
-					StructField('PV1', StringType(), True)]
-				   )
 
 def date_to_prefix():
     """for lambda version - use this prefix to pick most recent
@@ -64,10 +50,10 @@ def get_s3_jsons(sparksession, s3_full_path):
     """ get all jsons
     """
     try:
-        a_d_f = sparksession.read.json('s3a://' + s3_full_path, multiLine=True, schema=DF_SCHEMA).dropDuplicates()
+        a_d_f = sparksession.read.json('s3a://' + s3_full_path, multiLine=True).dropDuplicates()
         return a_d_f
-    except (AnalysisException,ParseException, Py4JJavaError):
-        print ('Unable to read JSON files at', s3_full_path)
+    except (AnalysisException, ParseException, Py4JJavaError):
+        logging.error('Unable to read JSON files at ' + s3_full_path)
         sys.exit(-1)
 
 def get_redis_jsons(redishost, redisport):
@@ -93,7 +79,7 @@ def get_redis_jsons(redishost, redisport):
         jsons.append(a_json)
 
     adf = spark.read.json(spark.sparkContext.parallelize(jsons,numSlices=840) \
-            , multiLine=True, schema=DF_SCHEMA).dropDuplicates()
+            , multiLine=True).dropDuplicates()
 
     return adf
 
@@ -135,13 +121,11 @@ def process_hl7_segment(hl7_segment, json_dict, new_data_dict):
                         field_name = f'{ac_name}_{ac_long_name}_{fc_name}_{fc_long_name}'
                         if field_name not in IGNORE_FIELDS:
                             new_data_dict[field_name] = fchild.value
-        if new_data_dict['pid_11_patient_address_xad_4_state_or_province'] in STATES:
-            return new_data_dict
-    except (KeyError, ValueError):
+    except (TypeError, KeyError, ValueError) as e_error:
         return False
 
 def process_data(dict_batch, segments, sparksession):
-    """process HL7 data
+    """process HL7 data - filter STATES
     """
     parsed_data = []
 
@@ -158,16 +142,21 @@ def process_data(dict_batch, segments, sparksession):
             if not process_hl7_segment(s_g, adict, data_dict):
                 continue
             data_dict = process_hl7_segment(s_g, adict, data_dict)
+        # filter out STATES
+        if data_dict['pid_11_patient_address_xad_4_state_or_province'] in STATES:
+            parsed_data.append(data_dict)
+    if parsed_data:
+        logging.info('**** Creating DF ****')
+        a_d_f = sparksession.createDataFrame(parsed_data)
+        a_d_f = rename_df_columns(a_d_f)
+        return a_d_f
+    else:
+        logging.info('**** Empty DF ****')
+        return False
 
-        parsed_data.append(data_dict)
+    #a_d_f = filter_df(a_d_f, sparksession)
 
-    logging.info('**** Creating DF ****')
-    a_d_f = sparksession.createDataFrame(parsed_data)
-
-    a_d_f = rename_df_columns(a_d_f)
-    a_d_f = filtered_df(a_d_f, sparksession)
-
-    return a_d_f
+    #return a_d_f
 
 def rename_df_columns(data_frame):
     """read (orig, new) tuples from a file into list of tuples
@@ -222,7 +211,7 @@ def df_to_jdbc(a_df, adtfeed):
     dbuserpass = config_obj.get('reportdb','dbuserpass')
 
     # no - in tablename...
-    datamodel_ver = 'v4'
+    datamodel_ver = 'v5'
     tablename = datamodel_ver + '_' + adtfeed.replace('-','_')
 
     url = 'jdbc:postgresql://'+dbhost+':'+dbport+'/'+dbname
@@ -241,10 +230,41 @@ def df_to_jdbc(a_df, adtfeed):
         logging.info('**** Stored ' + str(a_df.count()) + ' rows in table '+ tablename)
         return True
     except AnalysisException as e_error:
-        logging.error(e_error)
-        sys.exit(-1)
+        if "not found in schema" in str(e_error):
+            config = read_config('etl.config')
+            psql_conn, psql_cursor = psql_connection(config)
+            create_table (tablename, a_df.columns, psql_cursor)
+            a_df.write.jdbc(url, tablename, mode='append', properties=properties)
+        else:
+            logging.error(e_error)
+            sys.exit(-1)
 
-def filtered_df (unfiltered_df, spark_session):
+def psql_connection(config):
+    """Connect to PostgreSQL server
+    """
+    db_host = config.get('reportdb', 'host')
+    db_port = config.get('reportdb', 'port')
+    db_name = config.get('reportdb', 'dbname')
+    db_user = config.get('reportdb', 'dbuser')
+    db_pass = config.get('reportdb', 'dbuserpass')
+    psql_conn = psycopg2.connect(database=db_name, host=db_host, user=db_user, password=db_pass, port=db_port)
+    psql_cur = psql_conn.cursor()
+    return psql_conn, psql_cur
+
+def create_table(table, df_columns, psql_cur):
+    """Create Table
+    """
+
+    query = "CREATE TABLE IF NOT EXISTS " + table + " ()"
+    psql_cur.execute(query)
+    psql_cur.connection.commit()
+
+    for db_col in df_columns:
+        query = "ALTER TABLE " + table + " ADD COLUMN IF NOT EXISTS " + db_col + " text;"
+        psql_cur.execute(query)
+        psql_cur.connection.commit()
+
+def filter_df (unfiltered_df, spark_session):
     """Fileter rows
     """
 
@@ -277,11 +297,12 @@ def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
     for dict_batch in dict_batches:
         # process HL7 segments
         d_f = process_data(dict_batch, segments, sparksession)
-
-        d_f = truncate_col_name(d_f)
-        df_to_jdbc(d_f, adtfeedname)
-
-        d_f = ''
+        if d_f:
+            d_f = truncate_col_name(d_f)
+            df_to_jdbc(d_f, adtfeedname)
+            d_f = ''
+        else:
+            pass
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,format='%(asctime)s %(message)s',\
