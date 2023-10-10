@@ -2,7 +2,6 @@
 """Script that processes HL7 data from JSON files stored in S3 buckets
     and stores the transformed/processed data in PostgreSQL schema.
    See README.md for more details
-    TODO: add logger
 """
 
 import ast
@@ -47,6 +46,7 @@ def read_config(file_path):
 def get_s3_jsons(sparksession, s3_full_path):
     """ get all jsons
     """
+
     try:
         a_d_f = sparksession.read.json('s3a://' + s3_full_path, multiLine=True).dropDuplicates()
         return a_d_f
@@ -66,7 +66,7 @@ def get_redis_jsons(redishost, redisport):
     r_edis = redis.Redis(host=redishost, port=redisport, decode_responses=True)
 
     #get keys as list
-    search_for = 'pid_121*'
+    search_for = 'pid_*'
 
     logging.info('**** Getting following RedisJSON keys: %s ****', search_for)
 
@@ -134,6 +134,7 @@ def process_hl7_segment(hl7_segment, json_dict, new_data_dict):
 def process_data(dict_batch, segments, sparksession):
     """process HL7 data - filter STATES
     """
+
     parsed_data = []
 
     logging.info('**** Start Processing HL7 ****')
@@ -244,6 +245,7 @@ def df_to_jdbc(a_df, adtfeed):
 def psql_connection(p_config):
     """Connect to PostgreSQL server
     """
+
     db_host = p_config.get('reportdb', 'host')
     db_port = p_config.get('reportdb', 'port')
     db_name = p_config.get('reportdb', 'dbname')
