@@ -9,19 +9,17 @@ import ast
 import argparse
 import configparser
 import logging
-import numpy
-import psycopg2
-import redis
+from datetime import datetime
 import sys
 import time
 from ast import literal_eval as make_tuple
-from datetime import datetime
 from hl7apy.parser import parse_segment, parse_field
 from py4j.protocol import Py4JJavaError
 from pyspark.sql import SparkSession
 from pyspark.sql.utils import AnalysisException, ParseException
-from pyspark.sql.types import StructType,StructField, StringType
-
+import psycopg2
+import redis
+import numpy
 
 # transformed fields to ignore
 with open('hl7_field_names_to_ignore.txt', encoding='utf-8') as afile:
@@ -53,7 +51,7 @@ def get_s3_jsons(sparksession, s3_full_path):
         a_d_f = sparksession.read.json('s3a://' + s3_full_path, multiLine=True).dropDuplicates()
         return a_d_f
     except (AnalysisException, ParseException, Py4JJavaError):
-        logging.error('Unable to read JSON files at ' + s3_full_path)
+        logging.error('Unable to read JSON files at %s', s3_full_path)
         sys.exit(-1)
 
 def get_redis_jsons(redishost, redisport):
@@ -65,17 +63,17 @@ def get_redis_jsons(redishost, redisport):
 
     jsons = []
 
-    R = redis.Redis(host=redishost, port=redisport, decode_responses=True)
+    r_edis = redis.Redis(host=redishost, port=redisport, decode_responses=True)
 
     #get keys as list
-    search_for = 'pid_*'
+    search_for = 'pid_121*'
 
-    logging.info('**** Getting following RedisJSON keys: ' + search_for + ' ****')
+    logging.info('**** Getting following RedisJSON keys: %s ****', search_for)
 
-    json_keys = list(R.scan_iter(search_for))
+    json_keys = list(r_edis.scan_iter(search_for))
 
     for ajson in json_keys:
-        a_json = R.json().get(ajson)
+        a_json = r_edis.json().get(ajson)
         jsons.append(a_json)
 
     adf = spark.read.json(spark.sparkContext.parallelize(jsons,numSlices=840) \
@@ -104,25 +102,35 @@ def assign_child_name(sgchild):
     return short_name.lower(), long_name.lower()
 
 def process_hl7_segment(hl7_segment, json_dict, new_data_dict):
-    """parse HL7 raw data - extract values for segments and associated fields, create a dictionary.
-        Add dictironay to list of dictionarties.
+    """
+    Parse HL7 raw data to extract values for segments and associated fields and create a dictionary.
+    Add the dictionary to a list of dictionaries.
     """
 
     try:
-        segment_data = json_dict[hl7_segment]
+        segment_data = json_dict.get(hl7_segment)
+        if not segment_data:
+            return False
+
         asegment = parse_segment(segment_data)
         for achild in asegment.children:
             ac_name, ac_long_name = assign_child_name(achild)
-            if ac_name.upper() not in IGNORE_SEG_FIELDS:
-                field = parse_field(achild.value, name=achild.name)
-                for fchild in field.children:
-                    if fchild.name.upper() not in IGNORE_COMPONENT_FIELDS:
-                        fc_name, fc_long_name = assign_child_name(fchild)
-                        field_name = f'{ac_name}_{ac_long_name}_{fc_name}_{fc_long_name}'
-                        if field_name not in IGNORE_FIELDS:
-                            new_data_dict[field_name] = fchild.value
-    except (TypeError, KeyError, ValueError) as e_error:
+            if ac_name.upper() in IGNORE_SEG_FIELDS:
+                continue
+
+            field = parse_field(achild.value, name=achild.name)
+            for fchild in field.children:
+                if fchild.name.upper() in IGNORE_COMPONENT_FIELDS:
+                    continue
+
+                fc_name, fc_long_name = assign_child_name(fchild)
+                field_name = f'{ac_name}_{ac_long_name}_{fc_name}_{fc_long_name}'
+                if field_name not in IGNORE_FIELDS:
+                    new_data_dict[field_name] = fchild.value
+        return new_data_dict
+    except (TypeError, KeyError, ValueError):
         return False
+
 
 def process_data(dict_batch, segments, sparksession):
     """process HL7 data - filter STATES
@@ -142,6 +150,7 @@ def process_data(dict_batch, segments, sparksession):
             if not process_hl7_segment(s_g, adict, data_dict):
                 continue
             data_dict = process_hl7_segment(s_g, adict, data_dict)
+
         # filter out STATES
         if data_dict['pid_11_patient_address_xad_4_state_or_province'] in STATES:
             parsed_data.append(data_dict)
@@ -150,9 +159,9 @@ def process_data(dict_batch, segments, sparksession):
         a_d_f = sparksession.createDataFrame(parsed_data)
         a_d_f = rename_df_columns(a_d_f)
         return a_d_f
-    else:
-        logging.info('**** Empty DF ****')
-        return False
+
+    logging.info('**** Empty DF ****')
+    return False
 
     #a_d_f = filter_df(a_d_f, sparksession)
 
@@ -184,9 +193,9 @@ def truncate_col_name(a_df):
     for col_name in a_df.columns:
         size_bytes = len(col_name.encode('utf-8'))
         if size_bytes > 63:
-            logging.info('Long column name '+col_name)
+            logging.info('Long column name %s', col_name)
             truncated  = col_name[:62]
-            logging.info('Truncated column name'+truncated)
+            logging.info('Truncated column name %s', truncated)
             a_df = a_df.withColumnRenamed(col_name, truncated)
     return a_df
 
@@ -227,27 +236,26 @@ def df_to_jdbc(a_df, adtfeed):
         #  like INSERT IGNORE or INSERT INTO ... WHERE NOT EXISTS ...
         #  you'll have to do it manually - so append it is
         a_df.write.jdbc(url, tablename, mode='append', properties=properties)
-        logging.info('**** Stored ' + str(a_df.count()) + ' rows in table '+ tablename)
+        logging.info('**** Stored %s rows in table %s', str(a_df.count()), tablename)
         return True
     except AnalysisException as e_error:
         if "not found in schema" in str(e_error):
-            config = read_config('etl.config')
-            psql_conn, psql_cursor = psql_connection(config)
+            p_config = read_config('etl.config')
+            _, psql_cursor = psql_connection(p_config)
             create_table (tablename, a_df.columns, psql_cursor)
             a_df.write.jdbc(url, tablename, mode='append', properties=properties)
-        else:
-            logging.error(e_error)
-            sys.exit(-1)
+        return True
 
-def psql_connection(config):
+def psql_connection(p_config):
     """Connect to PostgreSQL server
     """
-    db_host = config.get('reportdb', 'host')
-    db_port = config.get('reportdb', 'port')
-    db_name = config.get('reportdb', 'dbname')
-    db_user = config.get('reportdb', 'dbuser')
-    db_pass = config.get('reportdb', 'dbuserpass')
-    psql_conn = psycopg2.connect(database=db_name, host=db_host, user=db_user, password=db_pass, port=db_port)
+    db_host = p_config.get('reportdb', 'host')
+    db_port = p_config.get('reportdb', 'port')
+    db_name = p_config.get('reportdb', 'dbname')
+    db_user = p_config.get('reportdb', 'dbuser')
+    db_pass = p_config.get('reportdb', 'dbuserpass')
+    psql_conn = psycopg2.connect(database=db_name, host=db_host, user=db_user,\
+                                    password=db_pass, port=db_port)
     psql_cur = psql_conn.cursor()
     return psql_conn, psql_cur
 
@@ -278,7 +286,7 @@ def filter_df (unfiltered_df, spark_session):
         logging.info('**** Running Spark SQL: patients ****')
         filtered_df = spark_session.sql(sql_query)
     except AnalysisException as e_error:
-        logging.error('Query Failed ' + e_error)
+        logging.error('Query Failed %s', e_error)
         sys.exit(-1)
     return filtered_df
 
@@ -286,9 +294,12 @@ def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
     """Apache Spark Magic happens here
     """
 
-    #d_f = get_s3_jsons(sparksession, s3bucketprefix)
-    logging.info('**** Get Redis Jsons ****')
-    d_f = get_redis_jsons(redis_host, redis_port)
+    if s3bucketprefix == 'JSON':
+        logging.info('**** Get Redis JSONs ****')
+        d_f = get_redis_jsons(redis_host, redis_port)
+    else:
+        logging.info('**** Get S3 JSONs ****')
+        d_f = get_s3_jsons(sparksession, s3bucketprefix)
 
     d_f = lower_case_col_names(d_f)
 
@@ -334,7 +345,7 @@ if __name__ == "__main__":
                              '--s3-bucket-prefix',
                              dest='s3_bucket_prefix',
                              action='store',
-                             default='none',
+                             default='JSON',
                              required=False,
                              help='Full path - <bucket-name>/prefix/',
                             )
@@ -366,8 +377,8 @@ if __name__ == "__main__":
 
     # can pass more than one name
     for adt_feed in adt_feed_name.split(','):
-        logging.info('**** Starting for ' + adt_feed)
+        logging.info('**** Starting for %s', adt_feed)
         df_etl(spark, adt_feed, HL7_SEGMENTS, s3_bucket_full_path)
-        logging.info('**** Completed for ' + adt_feed)
+        logging.info('**** Completed for %s', adt_feed)
 
     spark.stop()
