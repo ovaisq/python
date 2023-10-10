@@ -131,7 +131,6 @@ def process_hl7_segment(hl7_segment, json_dict, new_data_dict):
     except (TypeError, KeyError, ValueError):
         return False
 
-
 def process_data(dict_batch, segments, sparksession):
     """process HL7 data - filter STATES
     """
@@ -162,10 +161,6 @@ def process_data(dict_batch, segments, sparksession):
 
     logging.info('**** Empty DF ****')
     return False
-
-    #a_d_f = filter_df(a_d_f, sparksession)
-
-    #return a_d_f
 
 def rename_df_columns(data_frame):
     """read (orig, new) tuples from a file into list of tuples
