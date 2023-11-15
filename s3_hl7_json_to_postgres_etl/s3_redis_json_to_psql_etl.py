@@ -164,25 +164,21 @@ def process_data(dict_batch, segments, sparksession):
     return False
 
 def rename_df_columns(data_frame):
-    """read (orig, new) tuples from a file into list of tuples
-        rename columns to more readable format
+    """Rename columns using a mapping from a file
     """
 
     logging.info('**** Rename Column Names ****')
-    with open('field_map.txt', encoding='utf-8') as field_map_file:
-        rename_map = field_map_file.readlines()
 
-    for arow in rename_map:
-        atuple = make_tuple(arow)
-        orig = atuple[0]
-        new = atuple[-1]
+    with open('field_map.txt', encoding='utf-8') as field_map_file:
+        rename_map = [make_tuple(line) for line in field_map_file]
+
+    for orig, new in rename_map:
         data_frame = data_frame.withColumnRenamed(orig, new)
 
     return data_frame
 
 def truncate_col_name(a_df):
-    """catch column names that are greater than 63 bytes
-        truncate them for postgres
+    """Truncate column names that are greater than 63 bytes for PostgreSQL
     """
 
     logging.info('**** Truncate Column Names ****')
@@ -204,33 +200,32 @@ def lower_case_col_names(a_df):
     return a_df
 
 def df_to_jdbc(a_df, adtfeed):
-    """jdbc processed df into postgres
+    """Write DataFrame to PostgreSQL using JDBC
     """
 
     logging.info('**** Adding rows to PostgreSQL ****')
+
     config_obj = read_config('etl.config')
-    dbhost = config_obj.get('reportdb','host')
-    dbport = config_obj.get('reportdb','port')
-    dbname = config_obj.get('reportdb','dbname')
-    dbuser = config_obj.get('reportdb','dbuser')
-    dbuserpass = config_obj.get('reportdb','dbuserpass')
+    dbhost = config_obj.get('reportdb', 'host')
+    dbport = config_obj.get('reportdb', 'port')
+    dbname = config_obj.get('reportdb', 'dbname')
+    dbuser = config_obj.get('reportdb', 'dbuser')
+    dbuserpass = config_obj.get('reportdb', 'dbuserpass')
 
-    # no - in tablename...
+    # Replace "-" with "_" in adtfeed for tablename
     datamodel_ver = 'v5'
-    tablename = datamodel_ver + '_' + adtfeed.replace('-','_')
+    tablename = f"{datamodel_ver}_{adtfeed.replace('-', '_')}"
 
-    url = 'jdbc:postgresql://'+dbhost+':'+dbport+'/'+dbname
+    url = f'jdbc:postgresql://{dbhost}:{dbport}/{dbname}'
     properties = {
-                    'user': dbuser,
-                    'password': dbuserpass,
-                    'driver': 'org.postgresql.Driver',
-                    'batchsize' : '2000'
-                    }
+        'user': dbuser,
+        'password': dbuserpass,
+        'driver': 'org.postgresql.Driver',
+        'batchsize': '2000'
+    }
+
     try:
-        # mode("ingore") is just NOOP if table (or another sink) already exists
-        #  and writing modes cannot be combined. If you're looking for something
-        #  like INSERT IGNORE or INSERT INTO ... WHERE NOT EXISTS ...
-        #  you'll have to do it manually - so append it is
+        # Use "append" mode, which adds data to the existing table
         a_df.write.jdbc(url, tablename, mode='append', properties=properties)
         logging.info('**** Stored %s rows in table %s', str(a_df.count()), tablename)
         return True
@@ -238,7 +233,7 @@ def df_to_jdbc(a_df, adtfeed):
         if "not found in schema" in str(e_error):
             p_config = read_config('etl.config')
             _, psql_cursor = psql_connection(p_config)
-            create_table (tablename, a_df.columns, psql_cursor)
+            create_table(tablename, a_df.columns, psql_cursor)
             a_df.write.jdbc(url, tablename, mode='append', properties=properties)
         return True
 
@@ -246,46 +241,48 @@ def psql_connection(p_config):
     """Connect to PostgreSQL server
     """
 
-    db_host = p_config.get('reportdb', 'host')
-    db_port = p_config.get('reportdb', 'port')
-    db_name = p_config.get('reportdb', 'dbname')
-    db_user = p_config.get('reportdb', 'dbuser')
-    db_pass = p_config.get('reportdb', 'dbuserpass')
-    psql_conn = psycopg2.connect(database=db_name, host=db_host, user=db_user,\
-                                    password=db_pass, port=db_port)
-    psql_cur = psql_conn.cursor()
-    return psql_conn, psql_cur
+    db_config = {
+        'database': p_config.get('reportdb', 'dbname'),
+        'host': p_config.get('reportdb', 'host'),
+        'user': p_config.get('reportdb', 'dbuser'),
+        'password': p_config.get('reportdb', 'dbuserpass'),
+        'port': p_config.get('reportdb', 'port'),
+    }
+
+    try:
+        psql_conn = psycopg2.connect(**db_config)
+        psql_cur = psql_conn.cursor()
+        return psql_conn, psql_cur
+    except psycopg2.Error as e:
+        print(f"Error connecting to PostgreSQL: {e}")
+        raise 
 
 def create_table(table, df_columns, psql_cur):
     """Create Table
     """
-
-    query = "CREATE TABLE IF NOT EXISTS " + table + " ()"
-    psql_cur.execute(query)
+    create_query = f"CREATE TABLE IF NOT EXISTS {table} ();"
+    psql_cur.execute(create_query)
     psql_cur.connection.commit()
 
     for db_col in df_columns:
-        query = "ALTER TABLE " + table + " ADD COLUMN IF NOT EXISTS " + db_col + " text;"
-        psql_cur.execute(query)
+        add_column_query = f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {db_col} text;"
+        psql_cur.execute(add_column_query)
         psql_cur.connection.commit()
 
-def filter_df (unfiltered_df, spark_session):
-    """Fileter rows
+def filter_df(unfiltered_df, spark_session):
+    """Filter rows
     """
+    logging.info('**** Filtering Data ****')
 
-    logging.info('**** Filtering Data ***')
-    logging.info('**** Createing Temp View: patients  ****')
-    unfiltered_df.createOrReplaceTempView('patients')
-
-    sql_query = "select * from patients where \
-                pt_address_state_prov in ('CA', 'OR', 'WA', 'ID', 'UT')"
     try:
+        unfiltered_df.createOrReplaceTempView('patients')
+        sql_query = "SELECT * FROM patients WHERE pt_address_state_prov IN ('CA', 'OR', 'WA', 'ID', 'UT')"
         logging.info('**** Running Spark SQL: patients ****')
         filtered_df = spark_session.sql(sql_query)
+        return filtered_df
     except AnalysisException as e_error:
         logging.error('Query Failed %s', e_error)
-        sys.exit(-1)
-    return filtered_df
+        raise
 
 def df_etl(sparksession, adtfeedname, segments, s3bucketprefix):
     """Apache Spark Magic happens here
