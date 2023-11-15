@@ -7,23 +7,18 @@ import pyperclip
 import random
 import secrets
 
-def chars_to_bytes(chars):
-    if chars == 256:
-        return 192 #bytes
-    if chars == 128:
-        return 96 #bytes
-    if chars == 64:
-        return 48 #bytes
-    if chars == 32:
-        return 24 #bytes
-    if chars == 16:
-        return 12 #bytes
-    if chars == 8:
-        return 6 #bytes
+CHARS_TO_BYTES_MAP = {
+    8: 6,
+    16: 12,
+    32: 24,
+    64: 48,
+    128: 96,
+    256: 192
+}
 
 def entropy_seed(num_char):
     for i in range(random.randint(random.randint(1,13),random.randint(14,42))):
-        rand_bytes = secrets.token_urlsafe(chars_to_bytes(num_char))
+        rand_bytes = secrets.token_urlsafe(CHARS_TO_BYTES_MAP[num_char])
     return rand_bytes
 
 def main():
@@ -42,7 +37,7 @@ def main():
     args = arg_parser.parse_args()
     num_chars = int(args.num_chars)
 
-    num_chars_supported = [8, 16, 32, 64, 128, 256]
+    num_chars_supported = list(CHARS_TO_BYTES_MAP.keys())
 
     if num_chars in num_chars_supported:
         token = entropy_seed (num_chars)
@@ -51,7 +46,6 @@ def main():
         print (randtoken)
         print ('Copied to the clipboard')
         pyperclip.copy(randtoken)
-        entropy_seed (num_chars)
     else:
         print ('ERROR: Only following number of chars supported', num_chars_supported)
 
