@@ -50,7 +50,7 @@ def main():
     psql_cur = psql_conn.cursor()
 
     # postgresql table
-    table = 'jsondocs'
+    table = <psql table name here>
     num_files = 2000000
 
     for i in range(num_files):
