@@ -32,6 +32,11 @@ GENDER = ['M','F']
 INSURANCE = ['ALTADENA', 'BLUE SHIELD', 'KAISER', 'ANTHEM', "BLUE CROSS"]
 ADTS = ['08','01','02','04','32','64']
 
+def insert_data(psql_cur, table, sample):
+    query = "INSERT INTO {} (patientjson) VALUES (%s);".format(table)
+    psql_cur.execute(query, (json.dumps(sample),))
+    psql_cur.connection.commit()
+
 def main():
     config_obj = read_config('etl.config')
     dbhost = config_obj.get('reportdb','host')
@@ -45,7 +50,7 @@ def main():
     psql_cur = psql_conn.cursor()
 
     # postgresql table
-    table = <postgresql tablename>
+    table = 'jsondocs'
     num_files = 2000000
 
     for i in range(num_files):
@@ -90,9 +95,7 @@ def main():
         #R.json().set(filename, '$', json.dumps(sample))
 
         # postgresql JSONB
-        query = f"INSERT INTO {table} (patientjson) values ('{sample}');"
-        psql_cur.execute(query, (table, sample))
-        psql_cur.connection.commit()
+        insert_data(psql_cur, table, sample)
 
 if __name__ == '__main__':
     p1 = Process(target=main)
