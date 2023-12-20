@@ -39,7 +39,7 @@ result <- awscosts %>%
 # bar graph
 ggplot(result, aes(x = time_period, y = total_amount, fill = aws_service)) +
   geom_bar(stat = "identity", position = "stack") +
-  labs(title = "Daily AWS Service Costs",
+  labs(title = "Daily AWS Service Amortized Costs",
        x = "Time Period",
        y = "Total Amount") +
   theme_minimal()
