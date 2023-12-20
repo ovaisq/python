@@ -12,14 +12,12 @@ db_pass = '<db user password>'
 
 # connect to database
 tryCatch({
-  print("Connecting to Database…")
   con <- dbConnect(RPostgres::Postgres(), 
                       dbname = db_name,
                       host = db_host, 
                       port = db_port,
                       user = db_user, 
                       password = db_pass)
-  print("Database Connected!")
 },
 error=function(cond) {
   print("Unable to connect to Database.")
