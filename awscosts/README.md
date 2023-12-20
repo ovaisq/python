@@ -8,6 +8,7 @@ My very first attempt at using R to graph daily AWS spend. I find AWS Cost Explo
 * [R](https://cran.r-project.org/bin/)
 * R Packages: [ggplot2](https://github.com/tidyverse/ggplot2), [RPostgres](https://rpostgres.r-dbi.org), [tidyverse](https://tidyverse.tidyverse.org), [DBI](https://dbi.r-dbi.org)
 
+### Workflow
 ```mermaid
 flowchart TD
     A[AWS Cost Explorer API] --> B("Python 
@@ -17,5 +18,8 @@ flowchart TD
     D -- ggplot2 --> E[Bar Graph]
 ```
 
+### R Notebook: ggplot Bar Graph
 ![AWS Daily Spend Bar Graph](R_notebook_html_example.png)
+
+### PostgreSQL Table with AWS Cost Explorer Data
 ![PostgreSQL Table](aws_spend_postgres.png)
