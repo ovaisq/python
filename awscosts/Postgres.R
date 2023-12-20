@@ -28,10 +28,10 @@ awscosts <- dbReadTable(con,'costs')
 
 # dataframe
 result <- awscosts %>%
-  filter(timestamp == max(timestamp) & 
+  filter(timestamp == max(timestamp) & # latest timestamp for a given day
            time_period >= '2023-09-01' & # TODO: parameterize this 
-           time_period < '2023-10-01' & # TODO: parameterize this
-           cost_type == 'AmortizedCost') %>%
+           time_period < '2023-10-01' & # exclusive value. TODO: parameterize this
+           cost_type == 'AmortizedCost') %>% # TODO: do this for various cost types
   group_by(time_period, aws_service) %>%
   summarize(total_amount = sum(amount)) %>%
   arrange(time_period)
