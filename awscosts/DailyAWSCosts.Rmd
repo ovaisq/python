@@ -1,0 +1,61 @@
+---
+title: "Daily AWS Costs"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+---
+
+```{r bar chart, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+library(RPostgres)
+library(DBI)
+library(dplyr)
+library(ggplot2)
+
+#TODO: read this from config file
+db_name = '<db name>'
+db_host = '<db host>'
+db_port = 5432
+db_user = '<db user>'
+db_pass = '<db user password>'
+
+# connect to database
+tryCatch({
+  print("Connecting to Database…")
+  con <- dbConnect(
+    RPostgres::Postgres(),
+    dbname = db_name,
+    host = db_host,
+    port = db_port,
+    user = db_user,
+    password = db_pass
+  )
+  print("Database Connected!")
+},
+error = function(cond) {
+  print("Unable to connect to Database.")
+})
+
+#read postgresql table
+awscosts <- dbReadTable(con, 'costs')
+
+# dataframe
+result <- awscosts %>%
+  filter(
+    timestamp == max(timestamp) &
+      time_period >= '2023-09-01' & # TODO: parameterize this
+      time_period < '2023-10-01' & # TODO: parameterize this
+      cost_type == 'AmortizedCost'
+  ) %>%
+  group_by(time_period, aws_service) %>%
+  summarize(total_amount = sum(amount)) %>%
+  arrange(time_period)
+
+# bar graph
+ggplot(result, aes(x = time_period, y = total_amount, fill = aws_service)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Daily AWS Service Costs",
+       x = "Time Period",
+       y = "Total Amount") +
+  theme_minimal()
+```
