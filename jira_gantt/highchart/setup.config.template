@@ -1,0 +1,13 @@
+# update with required information and save it as
+#	setup.config file
+[jira]
+url=https://<subdomain>.atlassian.net
+token_user=<user login e-mail address>
+access_token=<Jira Personal Access Token>
+
+[psqldb]
+host=
+port=5432
+dbname=
+dbuser=
+dbuserpass=

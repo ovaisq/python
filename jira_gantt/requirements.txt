@@ -1,0 +1,5 @@
+atlassian_python_api==3.41.4
+pandas==2.0.3
+plotly==5.18.0
+psycopg2_binary==2.9.7
+Requests==2.31.0
