@@ -7,3 +7,5 @@ However, the JIRA Roadmap feature came with a caveat—it was confined to a sing
 
 Having previously delved into Atlassian product APIs, I always aspired to construct a dashboard without the need for manual query execution, data filtering, spreadsheet updates, or chart creation. Recently, my foray into data analytics led me to develop a basic yet effective daily spend bar chart using AWS-CLI, R, PostgreSQL, and Python. Building on my past familiarity with JIRA APIs, I subsequently crafted a straightforward Project Roadmap/Gantt chart using Pandas, HighCharts, and Python.
 
+### Examples
+* Main Screenshot ![Gantt Chart Screenshot](jira_gantt_highchart_main.png)
