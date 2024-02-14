@@ -246,24 +246,6 @@ def analyze_posts_endpoint():
     analyze_posts()
     return jsonify({'message': 'analyze_posts endpoint'})
 
-def post_analyzed_or_not(post_id):
-    """Look up whether or not a post_id has been analyzed
-    """
-
-    # query json key for a value
-    sql_query = f"""SELECT COUNT(*)
-		            FROM (SELECT analysis_document -> 'post_id'
-			        FROM analysis_documents
-			        WHERE analysis_document @> '{{"post_id":"{post_id}"}}') TempTable;"""
-
-    # number of times a post has been analyzed
-    num_analyzed = get_select_query_results(sql_query)
-
-    if num_analyzed[0][0] > 0:
-        return True #post has been analyzed
-    else:
-        return False #post has NOT been analyzed
-
 def db_get_post_ids():
     """List of post_ids, filtering out pre-analyzed post_ids from this
     """
