@@ -265,15 +265,21 @@ def post_analyzed_or_not(post_id):
         return False #post has NOT been analyzed
 
 def db_get_post_ids():
-    """
+    """List of post_ids, filtering out pre-analyzed post_ids from this
     """
 
     post_id_list = []
-    sql_query = """select post_id from post where post_body not in ('', '[removed]', '[deleted]');"""
+    sql_query = """SELECT post_id 
+                   FROM post
+                   WHERE post_body NOT IN ('', '[removed]', '[deleted]')
+                   AND post_id NOT IN (SELECT analysis_document ->> 'post_id' AS pid 
+                                       FROM analysis_documents
+                                       GROUP BY pid);"""
     post_ids = get_select_query_results(sql_query)
+
     for a_post_id in post_ids:
-        if not post_analyzed_or_not(a_post_id[0]):
-            post_id_list.append(a_post_id[0])
+        post_id_list.append(a_post_id[0])
+
     return post_id_list
 
 def analyze_posts():
