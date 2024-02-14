@@ -10,8 +10,8 @@ B[Post
 Comments]
 C[Post Redditor]
 D[Comment Redditor]
-E[Post Conent]
-F[Comment Conent]
+E[Post Content]
+F[Comment Content]
 A --- C
 B --- D
 A --- E

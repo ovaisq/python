@@ -46,8 +46,6 @@
         - Add scheduler app - to schedule some of these events
             - scheduler checks whether or not a similar tasks exists
         - Add logic to handle list of lists with NUM_ELEMENTS_CHUNK elementsimport configparser
-
-    ©2024, Ovais Quraishi
 """
 
 import configparser
@@ -248,6 +246,24 @@ def analyze_posts_endpoint():
     analyze_posts()
     return jsonify({'message': 'analyze_posts endpoint'})
 
+def post_analyzed_or_not(post_id):
+    """Look up whether or not a post_id has been analyzed
+    """
+
+    # query json key for a value
+    sql_query = f"""SELECT COUNT(*)
+		            FROM (SELECT analysis_document -> 'post_id'
+			        FROM analysis_documents
+			        WHERE analysis_document @> '{{"post_id":"{post_id}"}}') TempTable;"""
+
+    # number of times a post has been analyzed
+    num_analyzed = get_select_query_results(sql_query)
+
+    if num_analyzed[0][0] > 0:
+        return True #post has been analyzed
+    else:
+        return False #post has NOT been analyzed
+
 def db_get_post_ids():
     """
     """
@@ -256,7 +272,8 @@ def db_get_post_ids():
     sql_query = """select post_id from post where post_body not in ('', '[removed]', '[deleted]');"""
     post_ids = get_select_query_results(sql_query)
     for a_post_id in post_ids:
-        post_id_list.append(a_post_id[0])
+        if not post_analyzed_or_not(a_post_id[0]):
+            post_id_list.append(a_post_id[0])
     return post_id_list
 
 def analyze_posts():
@@ -267,6 +284,7 @@ def analyze_posts():
 
     counter = 0
     for a_post_id in post_ids:
+
         analyze_this(a_post_id)
         counter = sleep_to_avoid_429(counter)
 
@@ -279,6 +297,10 @@ def analyze_this(post_id):
 
     sql_query = f"""select post_title, post_body, post_id from post where post_id='{post_id}' and post_body not in ('', '[removed]', '[deleted]');"""
     post_data =  get_select_query_results(sql_query)
+
+    if not post_data:
+        logging.warning(f"Post ID {post_id} contains no body")
+        return
 
     # post_title, post_body for ChatGPT
     text = post_data[0][0] + post_data[0][1]
@@ -624,4 +646,4 @@ if __name__ == "__main__":
     app.run(port=5000,
             host='0.0.0.0',
             ssl_context=('cert.pem', 'key.pem'),
-            debug=False)
+            debug=True)
