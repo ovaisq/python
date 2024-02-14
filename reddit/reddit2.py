@@ -48,6 +48,7 @@
         - Add logic to handle list of lists with NUM_ELEMENTS_CHUNK elementsimport configparser
 """
 
+import asyncio
 import configparser
 import hashlib
 import json
@@ -64,6 +65,7 @@ from flask import Flask, request, jsonify
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token
 from praw import Reddit
 from prawcore import exceptions
+from ollama import AsyncClient
 from ollama import Client
 
 app = Flask('Reddit Scraper')
@@ -276,15 +278,15 @@ def analyze_posts():
     counter = 0
     for a_post_id in post_ids:
 
-        analyze_this(a_post_id)
+        asyncio.run(analyze_this(a_post_id))
         counter = sleep_to_avoid_429(counter)
 
-def analyze_this(post_id):
+async def analyze_this(post_id):
     """Analyze text
     """
-
+    logging.info(f"Analyzing post ID {post_id}")
     dt = unix_ts_str()
-    client = Client(host=CONFIG.get('service','OLLAMA_API_URL'))
+    client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
 
     sql_query = f"""select post_title, post_body, post_id from post where post_id='{post_id}' and post_body not in ('', '[removed]', '[deleted]');"""
     post_data =  get_select_query_results(sql_query)
@@ -299,7 +301,7 @@ def analyze_this(post_id):
     post_id = post_data[0][2]
 
     for llm in LLMS:
-        response = client.chat(
+        response = await client.chat(
                                model=llm,
                                stream=False,
                                messages=[
@@ -334,6 +336,9 @@ def analyze_this(post_id):
                         }
 
         insert_data_into_table('analysis_documents', analysis_data)
+        response = {}
+        analysis_document = {}
+        ayalysis_data = {}
 
 @app.route('/login', methods=['POST'])
 def login():
