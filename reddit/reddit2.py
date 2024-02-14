@@ -258,6 +258,9 @@ def db_get_post_ids():
                                        FROM analysis_documents
                                        GROUP BY pid);"""
     post_ids = get_select_query_results(sql_query)
+    if not post_ids:
+        logging.warning(f"db_get_post_ids(): no post_ids found in DB")
+        return
 
     for a_post_id in post_ids:
         post_id_list.append(a_post_id[0])
@@ -531,6 +534,10 @@ def get_authors_comments():
     """
 
     authors = db_get_authors()
+    if not authors:
+        logging.warning(f"db_get_authors(): No authors found in DB")
+        return
+
     for an_author in authors:
         try:
             redditor = REDDIT.redditor(an_author)
