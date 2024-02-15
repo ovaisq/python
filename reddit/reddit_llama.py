@@ -288,9 +288,11 @@ async def analyze_this(post_id):
     dt = unix_ts_str()
     client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
 
-    sql_query = f"""select post_title, post_body, post_id from post where post_id='{post_id}' and post_body not in ('', '[removed]', '[deleted]');"""
+    sql_query = f"""SELECT post_title, post_body, post_id
+                    FROM post
+                    WHERE post_id='{post_id}'
+                    AND post_body NOT IN ('', '[removed]', '[deleted]');"""
     post_data =  get_select_query_results(sql_query)
-
     if not post_data:
         logging.warning(f"Post ID {post_id} contains no body")
         return
@@ -569,6 +571,9 @@ def get_author_comments(author):
         redditor = REDDIT.redditor(author)
         comments = redditor.comments.hot(limit=None)
         author_comments = get_new_data_ids('comment', 'comment_id', comments)
+        if not author_comments:
+            logging.info(f"{author} has no new comments")
+            return
 
         counter = 0
         if author_comments:
@@ -578,8 +583,7 @@ def get_author_comments(author):
                 comment = REDDIT.comment(comment_id)
                 process_comment(comment)
                 counter = sleep_to_avoid_429(counter)
-        else:
-            logging.info(f"{author} has no new comments")
+
     except AttributeError as e:
         # store this for later inspection
         error_data = {
@@ -609,6 +613,10 @@ def join_new_subs():
     sql_query = """select subreddit from post where subreddit not in \
                 (select subreddit from subscription) group by subreddit;"""
     new_sub_rows = get_select_query_results(sql_query)
+    if not author_comments:
+        logging.info('No new subreddits to join')
+        return
+
     for a_row in new_sub_rows:
         if a_row[0] not in IGNORE_SUBS:
             new_subs.append(a_row[0])
@@ -632,9 +640,6 @@ def join_new_subs():
                              }
                 insert_data_into_table('errors', error_data)
                 logging.error(f'Unable to join {new_sub} - {e.args[0]}')
-
-    else:
-        logging.info('No new subs found')
 
 if __name__ == "__main__":
 
