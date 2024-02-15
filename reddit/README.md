@@ -14,7 +14,10 @@ Collects submissions, comments for each submission, author of each submission, a
 * Create Database and tables:
     See **reddit.sql**
 
-* Install Ollama-gpt: https://github.com/ollama/ollama/blob/main/docs/linux.md
+### Install Ollama-gpt 
+
+#### Linux
+* https://github.com/ollama/ollama/blob/main/docs/linux.md
 
 * Sample Debian Service config file: /etc/systemd/system/ollama.service
 ```shell
@@ -26,11 +29,85 @@ Environment="OLLAMA_HOST=0.0.0.0"
 
 ```
 
+#### MacOS
+* I installed Ollama-gpt on my MacMini M1 - using brew
+```shell
+> brew install ollama
+```
+* Start/Stop Service
+```shell
+> brew services start ollama
+> brew services stop ollama
+```
+
+**Bind Ollama server to local IPV4 address**
+
+* create a run shell script
+  ```shell
+  > /opt/homebrew/opt/ollama/bin
+  ```
+* Create a script named **ollama.sh** add the following
+  ```shell
+  #!/usr/bin/env bash
+  export OLLAMA_HOST=0.0.0.0
+  /opt/homebrew/bin/ollama $1
+  ```
+* Make script "executable"
+  ```shell
+  chmod +x ollama.sh
+  ```
+* Edit .plist file for the ollama homebrew service
+  ```shell
+    > cd /opt/homebrew/Cellar/ollama
+    > cd 0.1.24 #this may be different for your system
+    > vi homebrew.mxcl.ollama.plist
+  ```
+* Change original line
+  > <string>/opt/homebrew/opt/ollama/bin/ollama</string>
+
+    TO this:
+  > <string>/opt/homebrew/opt/ollama/bin/ollama.sh</string>
+* Save file
+* stop/start service
+  ```shell
+  > brew services stop ollama && brew services start ollama
+  ```
 * Add following models to ollama-gpt: deepseek-llm,llama2,llama-pro 
-
+  ```shell
+  > for llm in deepseek-llm llama2 llama-pro
+    do
+        ollama pull ${llm}
+    done
+  ```
 * Update setup.config with pertinent information (see setup.config.template)
+  ```text
+     # update with required information and save it as
+     #	setup.config file
+    [psqldb]
+    host=
+    port=5432
+    database=
+    user=
+    password=
 
-* **Run Service**:
+    [reddit]
+    client_id=
+    client_secret=
+    username=
+    password=
+    user_agent=
+
+    [service]
+    JWT_SECRET_KEY=
+    SRVC_SHARED_SECRET=
+    IDENTITY=
+    APP_SECRET_KEY=
+    ENDPOINT_URL=
+    OLLAMA_API_URL=
+    LLMS=
+  ```
+
+* Run Reddit llama-gpt Service:
     (see https://docs.gunicorn.org/en/stable/settings.html for config details)
 ```shell
     > gunicorn --certfile=cert.pem \
