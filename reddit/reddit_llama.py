@@ -95,6 +95,8 @@ REDDIT = Reddit(
                 username=CONFIG.get('reddit', 'username'),
                )
 
+
+#TODO split into smaller modules: this's be in the utils module
 def unix_ts_str():
     """Unix time as a string
     """
@@ -229,25 +231,6 @@ def sleep_to_avoid_429(counter):
         counter = 0
     return counter
 
-@app.route('/analyze_post', methods=['GET'])
-@jwt_required()
-def analyze_post_endpoint():
-    """Chat prompt a given post_id
-    """
-
-    post_id = request.args.get('post_id')
-    analyze_this(post_id)
-    return jsonify({'message': 'analyze_post endpoint'})
-
-@app.route('/analyze_posts', methods=['GET'])
-@jwt_required()
-def analyze_posts_endpoint():
-    """Chat prompt all post_ids
-    """
-
-    analyze_posts()
-    return jsonify({'message': 'analyze_posts endpoint'})
-
 def db_get_post_ids():
     """List of post_ids, filtering out pre-analyzed post_ids from this
     """
@@ -290,6 +273,116 @@ def db_get_comment_ids():
         comment_id_list.append(a_comment_id[0])
 
     return comment_id_list
+
+#TODO split into smaller modules: this's be in the AUTH module
+@app.route('/login', methods=['POST'])
+def login():
+    """Generate JWT
+    """
+
+    secret = request.json.get('api_key')
+
+    if secret != CONFIG.get('service','SRVC_SHARED_SECRET'):  # if the secret matches
+        return jsonify({"message": "Invalid secret"}), 401
+
+    # generate access token
+    access_token = create_access_token(identity=CONFIG.get('service','IDENTITY'))
+    return jsonify(access_token=access_token), 200
+
+#TODO split into smaller modules: this's be in the gpt module
+@app.route('/analyze_post', methods=['GET'])
+@jwt_required()
+def analyze_post_endpoint():
+    """Chat prompt a given post_id
+    """
+
+    post_id = request.args.get('post_id')
+    analyze_this(post_id)
+    return jsonify({'message': 'analyze_post endpoint'})
+
+@app.route('/analyze_posts', methods=['GET'])
+@jwt_required()
+def analyze_posts_endpoint():
+    """Chat prompt all post_ids
+    """
+
+    analyze_posts()
+    return jsonify({'message': 'analyze_posts endpoint'})
+
+def analyze_posts():
+    """Chat prompt a post title + post body
+    """
+
+    post_ids = db_get_post_ids()
+    if not post_ids:
+        return
+
+    counter = 0
+    for a_post_id in post_ids:
+
+        asyncio.run(analyze_this(a_post_id))
+        counter = sleep_to_avoid_429(counter)
+
+async def analyze_this(post_id):
+    """Analyze text
+    """
+    logging.info(f"Analyzing post ID {post_id}")
+    dt = unix_ts_str()
+    client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
+
+    sql_query = f"""SELECT post_title, post_body, post_id
+                    FROM post
+                    WHERE post_id='{post_id}'
+                    AND post_body NOT IN ('', '[removed]', '[deleted]');"""
+    post_data =  get_select_query_results(sql_query)
+    if not post_data:
+        logging.warning(f"Post ID {post_id} contains no body")
+        return
+
+    # post_title, post_body for ChatGPT
+    text = post_data[0][0] + post_data[0][1]
+    # post_id
+    post_id = post_data[0][2]
+
+    for llm in LLMS:
+        response = await client.chat(
+                               model=llm,
+                               stream=False,
+                               messages=[
+                                         {
+                                          'role': 'user',
+                                          'content': text
+                                         },
+                                        ],
+                               options = {
+                                          'temperature' : 0
+                                         }
+                              )
+
+        # chatgpt analysis
+        analysis = response['message']['content']
+
+        # this is for the analysis text only - the idea is to avoid
+        #  duplicate text document, to allow indexing the column so
+        #  to speed up search/lookups
+        analysis_sha512 = hashlib.sha512(str.encode(analysis)).hexdigest()
+
+        # jsonb document
+        analysis_document = {
+                             'unix_time' : dt,
+                             'post_id' : post_id,
+                             'llm' : llm,
+                             'analysis' : analysis
+                            }
+        analysis_data = {
+                         'shasum_512' : analysis_sha512,
+                         'analysis_document' : json.dumps(analysis_document)
+                        }
+
+        insert_data_into_table('analysis_documents', analysis_data)
+        response = {}
+        analysis_document = {}
+        ayalysis_data = {}
 
 @app.route('/analyze_comment', methods=['GET'])
 @jwt_required()
@@ -384,95 +477,6 @@ async def analyze_comment(comment_id):
         response = {}
         analysis_document = {}
         ayalysis_data = {}
-
-def analyze_posts():
-    """Chat prompt a post title + post body
-    """
-
-    post_ids = db_get_post_ids()
-    if not post_ids:
-        return
-
-    counter = 0
-    for a_post_id in post_ids:
-
-        asyncio.run(analyze_this(a_post_id))
-        counter = sleep_to_avoid_429(counter)
-
-async def analyze_this(post_id):
-    """Analyze text
-    """
-    logging.info(f"Analyzing post ID {post_id}")
-    dt = unix_ts_str()
-    client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
-
-    sql_query = f"""SELECT post_title, post_body, post_id
-                    FROM post
-                    WHERE post_id='{post_id}'
-                    AND post_body NOT IN ('', '[removed]', '[deleted]');"""
-    post_data =  get_select_query_results(sql_query)
-    if not post_data:
-        logging.warning(f"Post ID {post_id} contains no body")
-        return
-
-    # post_title, post_body for ChatGPT
-    text = post_data[0][0] + post_data[0][1]
-    # post_id
-    post_id = post_data[0][2]
-
-    for llm in LLMS:
-        response = await client.chat(
-                               model=llm,
-                               stream=False,
-                               messages=[
-                                         {
-                                          'role': 'user',
-                                          'content': text
-                                         },
-                                        ],
-                               options = {
-                                          'temperature' : 0
-                                         }
-                              )
-
-        # chatgpt analysis
-        analysis = response['message']['content']
-
-        # this is for the analysis text only - the idea is to avoid
-        #  duplicate text document, to allow indexing the column so
-        #  to speed up search/lookups
-        analysis_sha512 = hashlib.sha512(str.encode(analysis)).hexdigest()
-
-        # jsonb document
-        analysis_document = {
-                             'unix_time' : dt,
-                             'post_id' : post_id,
-                             'llm' : llm,
-                             'analysis' : analysis
-                            }
-        analysis_data = {
-                         'shasum_512' : analysis_sha512,
-                         'analysis_document' : json.dumps(analysis_document)
-                        }
-
-        insert_data_into_table('analysis_documents', analysis_data)
-        response = {}
-        analysis_document = {}
-        ayalysis_data = {}
-
-@app.route('/login', methods=['POST'])
-def login():
-    """Generate JWT
-    """
-
-    secret = request.json.get('api_key')
-
-    if secret != CONFIG.get('service','SRVC_SHARED_SECRET'):  # if the secret matches
-        return jsonify({"message": "Invalid secret"}), 401
-
-    # generate access token
-    access_token = create_access_token(identity=CONFIG.get('service','IDENTITY'))
-    return jsonify(access_token=access_token), 200
 
 @app.route('/get_sub_post', methods=['GET'])
 @jwt_required()
@@ -769,4 +773,4 @@ if __name__ == "__main__":
     app.run(port=5000,
             host='0.0.0.0',
             ssl_context=('cert.pem', 'key.pem'),
-            debug=True)
+            debug=True) # not for production
