@@ -258,11 +258,12 @@ def db_get_post_ids():
                    WHERE post_body NOT IN ('', '[removed]', '[deleted]')
                    AND post_id NOT IN (SELECT analysis_document ->> 'post_id' AS pid 
                                        FROM analysis_documents
+                                       WHERE analysis_document ->> 'post_id' IS NOT NULL
                                        GROUP BY pid);"""
     post_ids = get_select_query_results(sql_query)
     if not post_ids:
         logging.warning(f"db_get_post_ids(): no post_ids found in DB")
-        return
+        return False
 
     for a_post_id in post_ids:
         post_id_list.append(a_post_id[0])
@@ -389,6 +390,8 @@ def analyze_posts():
     """
 
     post_ids = db_get_post_ids()
+    if not post_ids:
+        return
 
     counter = 0
     for a_post_id in post_ids:
@@ -728,7 +731,7 @@ def join_new_subs():
     sql_query = """select subreddit from post where subreddit not in \
                 (select subreddit from subscription) group by subreddit;"""
     new_sub_rows = get_select_query_results(sql_query)
-    if not author_comments:
+    if not new_sub_rows:
         logging.info('No new subreddits to join')
         return
 
