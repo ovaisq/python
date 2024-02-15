@@ -269,8 +269,123 @@ def db_get_post_ids():
 
     return post_id_list
 
-def analyze_posts():
+def db_get_comment_ids():
+    """List of post_ids, filtering out pre-analyzed post_ids from this
     """
+
+    comment_id_list = []
+    sql_query = """SELECT comment_id
+                   FROM comment
+                   WHERE comment_body NOT IN ('', '[removed]', '[deleted]')
+                   AND comment_id NOT IN (SELECT analysis_document ->> 'comment_id' AS pid
+                                       FROM analysis_documents
+                                       GROUP BY pid);"""
+    comment_ids = get_select_query_results(sql_query)
+    if not comment_ids:
+        logging.warning(f"db_get_comment_ids(): no post_ids found in DB")
+        return
+
+    for a_comment_id in comment_ids:
+        comment_id_list.append(a_comment_id[0])
+
+    return comment_id_list
+
+@app.route('/analyze_comment', methods=['GET'])
+@jwt_required()
+def analyze_comment_endpoint():
+    """Chat prompt a given comment_id
+    """
+
+    comment_id = request.args.get('comment_id')
+    asyncio.run(analyze_comment(comment_id))
+    return jsonify({'message': 'analyze_comment endpoint'})
+
+@app.route('/analyze_comments', methods=['GET'])
+@jwt_required()
+def analyze_comments_endpoint():
+    """Chat prompt all post_ids
+    """
+
+    analyze_comments()
+    return jsonify({'message': 'analyze_comments endpoint'})
+
+def analyze_comments():
+    """Chat prompt a comment
+    """
+
+    comment_ids = db_get_comment_ids()
+
+    counter = 0
+    for a_comment_id in comment_ids:
+
+        asyncio.run(analyze_comment(a_comment_id))
+        counter = sleep_to_avoid_429(counter)
+
+async def analyze_comment(comment_id):
+    """Analyze text
+    """
+
+    logging.info(f"Analyzing comment ID {comment_id}")
+    dt = unix_ts_str()
+    client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
+
+    sql_query = f"""SELECT comment_id, comment_body
+                    FROM comment
+                    WHERE comment_id='{comment_id}'
+                    AND comment_body NOT IN ('', '[removed]', '[deleted]');"""
+    comment_data =  get_select_query_results(sql_query)
+    if not comment_data:
+        logging.warning(f"Comment ID {comment_id} contains no body")
+        return
+
+    print (comment_data)
+    # comment_body for ChatGPT
+    text = comment_data[0][1]
+    # comment_id
+    comment_id = comment_data[0][0]
+
+    for llm in LLMS:
+        response = await client.chat(
+                               model=llm,
+                               stream=False,
+                               messages=[
+                                         {
+                                          'role': 'user',
+                                          'content': 'analyze this: ' + text
+                                         },
+                                        ],
+                               options = {
+                                          'temperature' : 0
+                                         }
+                              )
+
+        # chatgpt analysis
+        analysis = response['message']['content']
+
+        # this is for the analysis text only - the idea is to avoid
+        #  duplicate text document, to allow indexing the column so
+        #  to speed up search/lookups
+        analysis_sha512 = hashlib.sha512(str.encode(analysis)).hexdigest()
+
+        # jsonb document
+        analysis_document = {
+                             'unix_time' : dt,
+                             'comment_id' : comment_id,
+                             'llm' : llm,
+                             'analysis' : analysis
+                            }
+        analysis_data = {
+                         'shasum_512' : analysis_sha512,
+                         'analysis_document' : json.dumps(analysis_document)
+                        }
+
+        insert_data_into_table('analysis_documents', analysis_data)
+        response = {}
+        analysis_document = {}
+        ayalysis_data = {}
+
+def analyze_posts():
+    """Chat prompt a post title + post body
     """
 
     post_ids = db_get_post_ids()
@@ -425,7 +540,7 @@ def get_post_details(post):
 
     post_author = post.author.name if post.author else None
 
-    if post_author:
+    if post_author and post.author.name != 'AutoModerator':
         process_author(post_author)
 
     post_data = {
