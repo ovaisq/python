@@ -61,6 +61,7 @@ import time
 from random import randrange
 
 import psycopg2
+from langdetect import detect, DetectorFactory
 from flask import Flask, request, jsonify
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token
 from praw import Reddit
@@ -246,7 +247,7 @@ def db_get_post_ids():
     post_ids = get_select_query_results(sql_query)
     if not post_ids:
         logging.warning(f"db_get_post_ids(): no post_ids found in DB")
-        return False
+        return
 
     for a_post_id in post_ids:
         post_id_list.append(a_post_id[0])
@@ -313,13 +314,14 @@ def analyze_posts():
     """Chat prompt a post title + post body
     """
 
+    logging.info('Analyzing Posts')
     post_ids = db_get_post_ids()
     if not post_ids:
         return
 
     counter = 0
     for a_post_id in post_ids:
-
+        logging.info(f'Analyzing Post ID {a_post_id}')
         asyncio.run(analyze_this(a_post_id))
         counter = sleep_to_avoid_429(counter)
 
@@ -343,8 +345,13 @@ async def analyze_this(post_id):
     text = post_data[0][0] + post_data[0][1]
     # post_id
     post_id = post_data[0][2]
-
+    language = detect(text)
+    # starting at ollama 0.1.24 and .25, it hangs on greek text
+    if language not in ('en'):
+        logging.warning(f'Skipping {post_id} - langage detected {language}')
+        return
     for llm in LLMS:
+        logging.info(f'Running {llm} for {post_id}')
         response = await client.chat(
                                model=llm,
                                stream=False,
@@ -432,7 +439,6 @@ async def analyze_comment(comment_id):
         logging.warning(f"Comment ID {comment_id} contains no body")
         return
 
-    print (comment_data)
     # comment_body for ChatGPT
     text = comment_data[0][1]
     # comment_id
