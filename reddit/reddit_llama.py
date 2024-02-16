@@ -354,18 +354,18 @@ async def analyze_this(post_id):
     for llm in LLMS:
         logging.info(f'Running {llm} for {post_id}')
         response = await client.chat(
-                               model=llm,
-                               stream=False,
-                               messages=[
-                                         {
-                                          'role': 'user',
-                                          'content': text
-                                         },
-                                        ],
-                               options = {
-                                          'temperature' : 0
-                                         }
-                              )
+                                     model=llm,
+                                     stream=False,
+                                     messages=[
+                                               {
+                                                'role': 'user',
+                                                'content': text
+                                               },
+                                              ],
+                                     options = {
+                                                'temperature' : 0
+                                               }
+                                    )
 
         # chatgpt analysis
         analysis = response['message']['content']
@@ -456,18 +456,18 @@ async def analyze_comment(comment_id):
         return
     for llm in LLMS:
         response = await client.chat(
-                               model=llm,
-                               stream=False,
-                               messages=[
-                                         {
-                                          'role': 'user',
-                                          'content': 'analyze this: ' + text
-                                         },
-                                        ],
-                               options = {
-                                          'temperature' : 0
-                                         }
-                              )
+                                     model=llm,
+                                     stream=False,
+                                     messages=[
+                                                 {
+                                                  'role': 'user',
+                                                  'content': 'analyze this: ' + text
+                                                 },
+                                               ],
+                                     options = {
+                                                'temperature' : 0
+                                               }
+                                    )
 
         # chatgpt analysis
         analysis = response['message']['content']
