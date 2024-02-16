@@ -346,11 +346,15 @@ async def analyze_this(post_id):
     text = post_data[0][0] + post_data[0][1]
     # post_id
     post_id = post_data[0][2]
-    language = detect(text)
-    # starting at ollama 0.1.24 and .25, it hangs on greek text
-    if language not in ('en'):
-        logging.warning(f'Skipping {post_id} - langage detected {language}')
-        return
+    try:
+        language = detect(text)
+        # starting at ollama 0.1.24 and .25, it hangs on greek text
+        if language not in ('en'):
+            logging.warning(f'Skipping {post_id} - langage detected {language}')
+            return
+    except lang_detect_exception.LangDetectException as e:
+        logging.warning(f'Skipping {post_id} - langage detected UNKNOWN')
+
     for llm in LLMS:
         logging.info(f'Running {llm} for {post_id}')
         response = await client.chat(
@@ -449,11 +453,15 @@ async def analyze_comment(comment_id):
     text = comment_data[0][1]
     # comment_id
     comment_id = comment_data[0][0]
-    language = detect(text)
-    # starting at ollama 0.1.24 and .25, it hangs on greek text
-    if language not in ('en'):
-        logging.warning(f'Skipping {comment_id} - langage detected {language}')
-        return
+    try:
+        language = detect(text)
+        # starting at ollama 0.1.24 and .25, it hangs on greek text
+        if language not in ('en'):
+            logging.warning(f'Skipping {comment_id} - langage detected {language}')
+            return
+    except lang_detect_exception.LangDetectException as e:
+        logging.warning(f'Skipping {comment_id} - langage detected UNKNOWN')
+
     for llm in LLMS:
         response = await client.chat(
                                      model=llm,
