@@ -61,6 +61,7 @@ import time
 from random import randrange
 
 import psycopg2
+import langdetect
 from langdetect import detect, DetectorFactory
 from flask import Flask, request, jsonify
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token
@@ -352,7 +353,7 @@ async def analyze_this(post_id):
         if language not in ('en'):
             logging.warning(f'Skipping {post_id} - langage detected {language}')
             return
-    except lang_detect_exception.LangDetectException as e:
+    except langdetect.lang_detect_exception.LangDetectException as e:
         logging.warning(f'Skipping {post_id} - langage detected UNKNOWN')
 
     for llm in LLMS:
@@ -459,7 +460,7 @@ async def analyze_comment(comment_id):
         if language not in ('en'):
             logging.warning(f'Skipping {comment_id} - langage detected {language}')
             return
-    except lang_detect_exception.LangDetectException as e:
+    except langdetect.lang_detect_exception.LangDetectException as e:
         logging.warning(f'Skipping {comment_id} - langage detected UNKNOWN')
 
     for llm in LLMS:
