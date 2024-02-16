@@ -264,6 +264,7 @@ def db_get_comment_ids():
                    WHERE comment_body NOT IN ('', '[removed]', '[deleted]')
                    AND comment_id NOT IN (SELECT analysis_document ->> 'comment_id' AS pid
                                        FROM analysis_documents
+                                       WHERE analysis_document ->> 'comment_id' is NOT null
                                        GROUP BY pid);"""
     comment_ids = get_select_query_results(sql_query)
     if not comment_ids:
@@ -414,7 +415,11 @@ def analyze_comments():
     """Chat prompt a comment
     """
 
+    logging.info('Analyzing Comments')
     comment_ids = db_get_comment_ids()
+    if not comment_ids:
+        logging.warning(f"Comment ID {comment_id} contains no body")
+        return
 
     counter = 0
     for a_comment_id in comment_ids:
@@ -428,6 +433,7 @@ async def analyze_comment(comment_id):
 
     logging.info(f"Analyzing comment ID {comment_id}")
     dt = unix_ts_str()
+
     client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
 
     sql_query = f"""SELECT comment_id, comment_body
@@ -443,7 +449,11 @@ async def analyze_comment(comment_id):
     text = comment_data[0][1]
     # comment_id
     comment_id = comment_data[0][0]
-
+    language = detect(text)
+    # starting at ollama 0.1.24 and .25, it hangs on greek text
+    if language not in ('en'):
+        logging.warning(f'Skipping {comment_id} - langage detected {language}')
+        return
     for llm in LLMS:
         response = await client.chat(
                                model=llm,
