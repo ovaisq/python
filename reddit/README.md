@@ -135,6 +135,7 @@ Environment="OLLAMA_HOST=0.0.0.0"
         - retry after 429
         - break down longer list of items into list of lists with small
             chunks
+    - Create Apache Superset Dashboards
 
 #### Example
 
