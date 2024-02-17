@@ -48,6 +48,13 @@
         - Add logic to handle list of lists with NUM_ELEMENTS_CHUNK elementsimport configparser
 """
 
+# Import required modules
+from config import get_config
+from reddit_api import create_reddit_instance
+from database import insert_data_into_table, get_new_data_ids
+from database import get_select_query_results
+from utils import unix_ts_str, gen_internal_id, list_into_chunks
+
 import asyncio
 import configparser
 import hashlib
@@ -74,139 +81,23 @@ app = Flask('Reddit Scraper')
 
 # constants
 NUM_ELEMENTS_CHUNK = 25
-CONFIG_FILE = 'setup.config'
-CONFIG = configparser.RawConfigParser()
-CONFIG.read(CONFIG_FILE)
+CONFIG = get_config()
 LLMS = CONFIG.get('service','LLMS').split(',')
 IGNORE_SUBS = ['u_zackmedude']
 
 # Flask app config
 app.config.update(
-                  JWT_SECRET_KEY= CONFIG.get('service', 'JWT_SECRET_KEY'),
+                  JWT_SECRET_KEY=CONFIG.get('service', 'JWT_SECRET_KEY'),
                   SECRET_KEY=CONFIG.get('service', 'APP_SECRET_KEY'),
                   PERMANENT_SESSION_LIFETIME=172800 #2 days
                  )
 jwt = JWTManager(app)
 
 # Reddit authentication
-REDDIT = Reddit(
-                client_id=CONFIG.get('reddit', 'client_id'),
-                client_secret=CONFIG.get('reddit', 'client_secret'),
-                password=CONFIG.get('reddit', 'password'),
-                user_agent=CONFIG.get('reddit', 'user_agent'),
-                username=CONFIG.get('reddit', 'username'),
-               )
+REDDIT = create_reddit_instance()
 
 
 #TODO split into smaller modules: this's be in the utils module
-def unix_ts_str():
-    """Unix time as a string
-    """
-
-    dt = str(int(time.time())) # unix time
-    return dt
-
-def gen_internal_id():
-    """Generate 10 number internal document id
-        this id is used to track edited version of original document
-    """
-
-    # reddit uses 7 character long alphanum ids - to avoid any confusion
-    #  using a 10 char long alphanum id to tag edited/modified analysis responses
-    ten_alpha_nums = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
-    #return ten_alpha_nums
-    pass #TBD
-
-def list_into_chunks(a_list, num_elements_chunk):
-    """Split list into list of lists with each list containing
-        num_elements_chunk elements
-
-        Returns a list of list or if list contains equal or less
-         elements, then just that list
-    """
-
-    if len(a_list) > num_elements_chunk:
-        for i in range(0, len(a_list), num_elements_chunk):
-            yield a_list[i:i + num_elements_chunk]
-    else:
-        yield a_list
-
-def read_config(file_path):
-    """Read setup config file
-    """
-
-    if pathlib.Path(file_path).exists():
-        config_obj = configparser.RawConfigParser()
-        config_obj.read(file_path)
-        return config_obj
-    raise FileNotFoundError(f"Config file {file_path} not found.")
-
-def psql_connection():
-    """Connect to PostgreSQL server
-    """
-
-    db_config = read_config(CONFIG_FILE)['psqldb']
-    try:
-        psql_conn = psycopg2.connect(**db_config)
-        psql_cur = psql_conn.cursor()
-        return psql_conn, psql_cur
-    except psycopg2.Error as e:
-        logging.error(f"Error connecting to PostgreSQL: {e}")
-        raise
-
-def get_select_query_results(sql_query):
-    """Execute a query, return all rows for the query
-    """
-
-    conn, cur = psql_connection()
-    try:
-        cur.execute(sql_query)
-        result = cur.fetchall()
-        conn.close()
-        return result
-    except psycopg2.Error as e:
-        logging.error(f"{e}")
-        raise
-
-def insert_data_into_table(table_name, data):
-    """Insert data into table
-    """
-
-    conn, cur = psql_connection()
-    try:
-        placeholders = ', '.join(['%s'] * len(data))
-        columns = ', '.join(data.keys())
-        sql_query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders}) \
-                     ON CONFLICT DO NOTHING;"
-        cur.execute(sql_query, list(data.values()))
-        conn.commit()
-    except psycopg2.Error as e:
-        logging.error(f"{e}")
-        raise
-
-def get_new_data_ids(table_name, unique_column, reddit_data):
-    """Get object ids for new messages on reddit
-        query db for existing ids
-        query api for all ids
-        return the diff from the api
-    """
-
-    query = f"SELECT {unique_column} FROM {table_name} GROUP BY {unique_column};"
-
-    data_ids_db = [] # array to hold ids from database table
-    data_ids_reddit = [] # arrary to hold ids from reddit api call
-
-    result = get_select_query_results(query)
-    for row in result:
-        data_ids_db.append(row[0])
-
-    for item in reddit_data:
-        data_ids_reddit.append(item.id)
-
-    new_list = set(data_ids_reddit) - set(data_ids_db)
-    #TODO new_list_of_lists = list(list_into_chunks(list(newlist), NUM_ELEMENTS_CHUNK))
-    return list(new_list) 
-
 def db_get_authors():
     """Get list of authors from db table
         return python list
@@ -300,7 +191,7 @@ def analyze_post_endpoint():
     """
 
     post_id = request.args.get('post_id')
-    analyze_this(post_id)
+    asyncio.run(analyze_this(post_id))
     return jsonify({'message': 'analyze_post endpoint'})
 
 @app.route('/analyze_posts', methods=['GET'])
