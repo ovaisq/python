@@ -88,3 +88,47 @@ def db_get_authors():
     for row in authors:
         author_list.append(row[0])
     return author_list
+
+def db_get_post_ids():
+    """List of post_ids, filtering out pre-analyzed post_ids from this
+    """
+
+    post_id_list = []
+    sql_query = """SELECT post_id
+                   FROM post
+                   WHERE post_body NOT IN ('', '[removed]', '[deleted]')
+                   AND post_id NOT IN (SELECT analysis_document ->> 'post_id' AS pid
+                                       FROM analysis_documents
+                                       WHERE analysis_document ->> 'post_id' IS NOT NULL
+                                       GROUP BY pid);"""
+    post_ids = get_select_query_results(sql_query)
+    if not post_ids:
+        logging.warning(f"db_get_post_ids(): no post_ids found in DB")
+        return
+
+    for a_post_id in post_ids:
+        post_id_list.append(a_post_id[0])
+
+    return post_id_list
+
+def db_get_comment_ids():
+    """List of post_ids, filtering out pre-analyzed post_ids from this
+    """
+
+    comment_id_list = []
+    sql_query = """SELECT comment_id
+                   FROM comment
+                   WHERE comment_body NOT IN ('', '[removed]', '[deleted]')
+                   AND comment_id NOT IN (SELECT analysis_document ->> 'comment_id' AS pid
+                                       FROM analysis_documents
+                                       WHERE analysis_document ->> 'comment_id' is NOT null
+                                       GROUP BY pid);"""
+    comment_ids = get_select_query_results(sql_query)
+    if not comment_ids:
+        logging.warning(f"db_get_comment_ids(): no post_ids found in DB")
+        return
+
+    for a_comment_id in comment_ids:
+        comment_id_list.append(a_comment_id[0])
+
+    return comment_id_list
