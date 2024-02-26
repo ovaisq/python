@@ -78,7 +78,6 @@ app = Flask('Reddit Scraper')
 NUM_ELEMENTS_CHUNK = 25
 CONFIG = get_config()
 LLMS = CONFIG.get('service','LLMS').split(',')
-IGNORE_SUBS = ['u_zackmedude']
 
 # Flask app config
 app.config.update(
@@ -578,7 +577,7 @@ def join_new_subs():
         return
 
     for a_row in new_sub_rows:
-        if a_row[0] not in IGNORE_SUBS:
+        if not a_row[0].startswith('u_'):
             new_subs.append(a_row[0])
 
     if new_subs:
