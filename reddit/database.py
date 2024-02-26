@@ -120,9 +120,9 @@ def db_get_comment_ids():
                    FROM comment
                    WHERE comment_body NOT IN ('', '[removed]', '[deleted]')
                    AND comment_id NOT IN (SELECT analysis_document ->> 'comment_id' AS pid
-                                       FROM analysis_documents
-                                       WHERE analysis_document ->> 'comment_id' is NOT null
-                                       GROUP BY pid);"""
+                                          FROM analysis_documents
+                                          WHERE analysis_document ->> 'comment_id' is NOT null
+                                          GROUP BY pid);"""
     comment_ids = get_select_query_results(sql_query)
     if not comment_ids:
         logging.warning(f"db_get_comment_ids(): no post_ids found in DB")

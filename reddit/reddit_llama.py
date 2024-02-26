@@ -589,7 +589,7 @@ def join_new_subs():
                 sub_data = {
                             'datetimesubscribed' : dt,
                             'subreddit' : new_sub
-                        }
+                           }
                 insert_data_into_table('subscription', sub_data)
             except (exceptions.Forbidden, exceptions.NotFound) as e:
                 # store this for later inspection
