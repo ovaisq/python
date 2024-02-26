@@ -1,6 +1,7 @@
 # database.py
 
 import psycopg2
+import logging
 from config import get_config
 
 def psql_connection():
