@@ -57,7 +57,7 @@ from database import get_new_data_ids
 from database import get_select_query_results
 from database import db_get_post_ids
 from database import db_get_comment_ids
-from utils import unix_ts_str, gen_internal_id, list_into_chunks
+from utils import unix_ts_str, gen_internal_id, list_into_chunks, sleep_to_avoid_429
 
 import asyncio
 import configparser
@@ -100,21 +100,6 @@ jwt = JWTManager(app)
 # Reddit authentication
 REDDIT = create_reddit_instance()
 
-def sleep_to_avoid_429(counter):
-    """Sleep for a random number of seconds to avoid 429
-        TODO: handle status code from the API
-        but it's better not to trigger the 429 at all...
-    """
-
-    counter += 1
-    if counter > 23: # anecdotal magic number
-        sleep_for = randrange(65, 345)
-        logging.info(f"Sleeping for {sleep_for} seconds")
-        time.sleep(sleep_for)
-        counter = 0
-    return counter
-
-#TODO split into smaller modules: this's be in the AUTH module
 @app.route('/login', methods=['POST'])
 def login():
     """Generate JWT
@@ -409,7 +394,7 @@ def get_post_details(post):
 
     post_author = post.author.name if post.author else None
 
-    if post_author and post.author.name != 'AutoModerator':
+    if post_author != 'AutoModerator':
         process_author(post_author)
 
     post_data = {

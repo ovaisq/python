@@ -23,3 +23,16 @@ def list_into_chunks(a_list, num_elements_chunk):
     else:
         yield a_list
 
+def sleep_to_avoid_429(counter):
+    """Sleep for a random number of seconds to avoid 429
+        TODO: handle status code from the API
+        but it's better not to trigger the 429 at all...
+    """
+
+    counter += 1
+    if counter > 23: # anecdotal magic number
+        sleep_for = randrange(65, 345)
+        logging.info(f"Sleeping for {sleep_for} seconds")
+        time.sleep(sleep_for)
+        counter = 0
+    return counter
