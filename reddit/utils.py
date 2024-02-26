@@ -31,7 +31,7 @@ def sleep_to_avoid_429(counter):
 
     counter += 1
     if counter > 23: # anecdotal magic number
-        sleep_for = randrange(65, 345)
+        sleep_for = random.randrange(65, 345)
         logging.info(f"Sleeping for {sleep_for} seconds")
         time.sleep(sleep_for)
         counter = 0
