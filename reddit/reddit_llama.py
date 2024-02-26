@@ -48,7 +48,20 @@
         - Add logic to handle list of lists with NUM_ELEMENTS_CHUNK elementsimport configparser
 """
 
-# Import required modules
+
+import asyncio
+import hashlib
+import json
+import logging
+
+import langdetect
+from langdetect import detect
+from flask import Flask, request, jsonify
+from flask_jwt_extended import JWTManager, jwt_required, create_access_token
+from prawcore import exceptions
+from ollama import AsyncClient
+
+# Import required local modules
 from config import get_config
 from reddit_api import create_reddit_instance
 from database import db_get_authors
@@ -57,29 +70,7 @@ from database import get_new_data_ids
 from database import get_select_query_results
 from database import db_get_post_ids
 from database import db_get_comment_ids
-from utils import unix_ts_str, gen_internal_id, list_into_chunks, sleep_to_avoid_429
-
-import asyncio
-import configparser
-import hashlib
-import json
-import logging
-import ollama
-import pathlib
-import random
-import string
-import time
-from random import randrange
-
-import psycopg2
-import langdetect
-from langdetect import detect, DetectorFactory
-from flask import Flask, request, jsonify
-from flask_jwt_extended import JWTManager, jwt_required, create_access_token
-from praw import Reddit
-from prawcore import exceptions
-from ollama import AsyncClient
-from ollama import Client
+from utils import unix_ts_str, sleep_to_avoid_429
 
 app = Flask('Reddit Scraper')
 
@@ -114,7 +105,6 @@ def login():
     access_token = create_access_token(identity=CONFIG.get('service','IDENTITY'))
     return jsonify(access_token=access_token), 200
 
-#TODO split into smaller modules: this's be in the gpt module
 @app.route('/analyze_post', methods=['GET'])
 @jwt_required()
 def analyze_post_endpoint():
@@ -145,14 +135,14 @@ def analyze_posts():
 
     counter = 0
     for a_post_id in post_ids:
-        logging.info(f'Analyzing Post ID {a_post_id}')
+        logging.info('Analyzing Post ID %s', a_post_id)
         asyncio.run(analyze_this(a_post_id))
         counter = sleep_to_avoid_429(counter)
 
 async def analyze_this(post_id):
     """Analyze text
     """
-    logging.info(f"Analyzing post ID {post_id}")
+    logging.info('Analyzing post ID %s', post_id)
     dt = unix_ts_str()
     client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
 
@@ -162,7 +152,7 @@ async def analyze_this(post_id):
                     AND post_body NOT IN ('', '[removed]', '[deleted]');"""
     post_data =  get_select_query_results(sql_query)
     if not post_data:
-        logging.warning(f"Post ID {post_id} contains no body")
+        logging.warning('Post ID %s contains no body', post_id)
         return
 
     # post_title, post_body for ChatGPT
@@ -173,13 +163,13 @@ async def analyze_this(post_id):
         language = detect(text)
         # starting at ollama 0.1.24 and .25, it hangs on greek text
         if language not in ('en'):
-            logging.warning(f'Skipping {post_id} - langage detected {language}')
+            logging.warning('Skipping %s - langage detected %s', post_id, language)
             return
     except langdetect.lang_detect_exception.LangDetectException as e:
-        logging.warning(f'Skipping {post_id} - langage detected UNKNOWN')
+        logging.warning('Skipping %s - langage detected UNKNOWN %s', post_id, e)
 
     for llm in LLMS:
-        logging.info(f'Running {llm} for {post_id}')
+        logging.info('Running %s for %s', llm, post_id)
         response = await client.chat(
                                      model=llm,
                                      stream=False,
@@ -217,7 +207,7 @@ async def analyze_this(post_id):
         insert_data_into_table('analysis_documents', analysis_data)
         response = {}
         analysis_document = {}
-        ayalysis_data = {}
+        analysis_data = {}
 
 @app.route('/analyze_comment', methods=['GET'])
 @jwt_required()
@@ -245,7 +235,7 @@ def analyze_comments():
     logging.info('Analyzing Comments')
     comment_ids = db_get_comment_ids()
     if not comment_ids:
-        logging.warning(f"Comment ID {comment_id} contains no body")
+        logging.warning('No comments to analyze')
         return
 
     counter = 0
@@ -258,7 +248,7 @@ async def analyze_comment(comment_id):
     """Analyze text
     """
 
-    logging.info(f"Analyzing comment ID {comment_id}")
+    logging.info('Analyzing comment ID %s', comment_id)
     dt = unix_ts_str()
 
     client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
@@ -269,7 +259,7 @@ async def analyze_comment(comment_id):
                     AND comment_body NOT IN ('', '[removed]', '[deleted]');"""
     comment_data =  get_select_query_results(sql_query)
     if not comment_data:
-        logging.warning(f"Comment ID {comment_id} contains no body")
+        logging.warning('Comment ID %s contains no body', comment_id)
         return
 
     # comment_body for ChatGPT
@@ -280,10 +270,10 @@ async def analyze_comment(comment_id):
         language = detect(text)
         # starting at ollama 0.1.24 and .25, it hangs on greek text
         if language not in ('en'):
-            logging.warning(f'Skipping {comment_id} - langage detected {language}')
+            logging.warning('Skipping %s - langage detected %s', comment_id, language)
             return
     except langdetect.lang_detect_exception.LangDetectException as e:
-        logging.warning(f'Skipping {comment_id} - langage detected UNKNOWN')
+        logging.warning('Skipping %s - langage detected UNKNOWN %s', comment_id, e)
 
     for llm in LLMS:
         response = await client.chat(
@@ -323,7 +313,7 @@ async def analyze_comment(comment_id):
         insert_data_into_table('analysis_documents', analysis_data)
         response = {}
         analysis_document = {}
-        ayalysis_data = {}
+        analysis_data = {}
 
 @app.route('/get_sub_post', methods=['GET'])
 @jwt_required()
@@ -349,7 +339,7 @@ def get_sub_post(post_id):
     """Get a submission post
     """
 
-    logging.info(f"Getting post id {post_id}")
+    logging.info('Getting post id %s', post_id)
 
     post = REDDIT.submission(post_id)
     post_data = get_post_details(post)
@@ -360,7 +350,7 @@ def get_sub_posts(sub):
     """Get all posts for a given sub
     """
 
-    logging.info(f"Getting posts in subreddit {sub}")
+    logging.info('Getting posts in subreddit %s', sub)
     try:
         posts = REDDIT.subreddit(sub).hot(limit=None)
         new_post_ids = get_new_data_ids('post', 'post_id', posts)
@@ -376,13 +366,13 @@ def get_sub_posts(sub):
                       'error': e.args[0]
                      }
         insert_data_into_table('errors', error_data)
-        logging.warning(f"GET SUB POSTS {sub} {e.args[0]}")
+        logging.warning('GET SUB POSTS %s %s', sub, e.args[0])
 
 def get_post_comments(post_obj):
     """Get all comments made to a submission post
     """
 
-    logging.info(f"Getting comments for post {post_obj.id}")
+    logging.info('Getting comments for post %s', post_obj.id)
 
     for comment in post_obj.comments:
         comment_data = get_comment_details(comment)
@@ -458,7 +448,7 @@ def process_author(author_name):
     """Process author information.
     """
 
-    logging.info(f"Processing Author {author_name}")
+    logging.info('Processing Author %s', author_name)
 
     author_data = {}
     try:
@@ -478,7 +468,7 @@ def process_author(author_name):
                       'error': e.args[0]
                      }
         insert_data_into_table('errors', error_data)
-        logging.warning(f"AUTHOR {author_name} {e.args[0]}")
+        logging.warning('AUTHOR %s %s', author_name, e.args[0])
 
 def get_author(anauthor):
     """Get author info of a comment or a submission
@@ -511,13 +501,12 @@ def get_authors_comments():
 
     authors = db_get_authors()
     if not authors:
-        logging.warning(f"db_get_authors(): No authors found in DB")
+        logging.warning('db_get_authors(): No authors found in DB')
         return
 
     for an_author in authors:
         try:
-            redditor = REDDIT.redditor(an_author)
-            redditor.fullname
+            REDDIT.redditor(an_author)
             get_author_comments(an_author)
         except exceptions.NotFound as e:
             # store this for later inspection
@@ -527,27 +516,27 @@ def get_authors_comments():
                           'error': e.args[0]
                          }
             insert_data_into_table('errors', error_data)
-            logging.warning(f"AUTHOR DELETED {an_author} {e.args[0]}")
+            logging.warning('AUTHOR DELETED %s %s', an_author, e.args[0])
 
 
 def get_author_comments(author):
     """Get author comments, author posts, insert data into db
     """
 
-    logging.info(f"Getting comments for {author}")
+    logging.info('Getting comments for %s', author)
 
     try:
         redditor = REDDIT.redditor(author)
         comments = redditor.comments.hot(limit=None)
         author_comments = get_new_data_ids('comment', 'comment_id', comments)
         if not author_comments:
-            logging.info(f"{author} has no new comments")
+            logging.info('%s has no new comments', author)
             return
 
         counter = 0
         if author_comments:
             num_comments = len(author_comments)
-            logging.info(f"{author} {num_comments} new comments")
+            logging.info('%s %s new comments', author, num_comments)
             for comment_id in author_comments:
                 comment = REDDIT.comment(comment_id)
                 process_comment(comment)
@@ -561,7 +550,7 @@ def get_author_comments(author):
                       'error': e.args[0]
                      }
         insert_data_into_table('errors', error_data)
-        logging.warning(f"AUTHOR COMMENT {comment_id} {e.args[0]}")
+        logging.warning('AUTHOR COMMENT %s %s', comment_id, e.args[0])
 
 @app.route('/join_new_subs', methods=['GET'])
 @jwt_required()
@@ -573,6 +562,8 @@ def join_new_subs_endpoint():
     return jsonify({'message': 'join_new_subs_endpoint endpoint'})
 
 def join_new_subs():
+    """Join newly discovered subreddits
+    """
 
     logging.info('Joining New Subs')
     new_subs = []
@@ -592,7 +583,7 @@ def join_new_subs():
 
     if new_subs:
         for new_sub in new_subs:
-            logging.info(f'Joining new sub {new_sub}')
+            logging.info('Joining new sub %s', new_sub)
             try:
                 REDDIT.subreddit(new_sub).subscribe()
                 sub_data = {
@@ -608,7 +599,7 @@ def join_new_subs():
                               'error': e.args[0]
                              }
                 insert_data_into_table('errors', error_data)
-                logging.error(f'Unable to join {new_sub} - {e.args[0]}')
+                logging.error('Unable to join %s - %s', new_sub, e.args[0])
 
 if __name__ == "__main__":
 
