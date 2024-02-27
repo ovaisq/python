@@ -505,10 +505,13 @@ def get_authors_comments():
         logging.warning('db_get_authors(): No authors found in DB')
         return
 
+    counter = 0
     for an_author in authors:
+        print (an_author)
         try:
             REDDIT.redditor(an_author)
             get_author_comments(an_author)
+            counter = sleep_to_avoid_429(counter)
         except exceptions.NotFound as e:
             # store this for later inspection
             error_data = {
@@ -552,6 +555,17 @@ def get_author_comments(author):
                      }
         insert_data_into_table('errors', error_data)
         logging.warning('AUTHOR COMMENT %s %s', comment_id, e.args[0])
+
+    # when author has no comments available - either author has been removed or blocked
+    except exceptions.Forbidden as e:
+        # store this for later inspection
+        error_data = {
+                      'item_id': 'COMMENT_ID_NOT_AVAILABLE',
+                      'item_type': 'COMMENT',
+                      'error': e.args[0]
+                     }
+        insert_data_into_table('errors', error_data)
+        logging.warning('AUTHOR COMMENT %s %s', author, e.args[0])
 
 @app.route('/join_new_subs', methods=['GET'])
 @jwt_required()
@@ -605,6 +619,9 @@ def join_new_subs():
 if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO) # init logging
+    gunicorn_logger = logging.getLogger('gunicorn.error')
+    app.logger.handlers = gunicorn_logger.handlers
+    app.logger.setLevel(gunicorn_logger.level)
 
     # non-production WSGI settings:
     #  port 5000, listen to local ip address, use ssl
