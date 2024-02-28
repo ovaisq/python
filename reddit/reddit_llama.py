@@ -113,7 +113,7 @@ def analyze_post_endpoint():
     """
 
     post_id = request.args.get('post_id')
-    asyncio.run(analyze_this(post_id))
+    asyncio.run(analyze_post(post_id))
     return jsonify({'message': 'analyze_post endpoint'})
 
 @app.route('/analyze_posts', methods=['GET'])
@@ -136,9 +136,9 @@ def analyze_posts():
 
     for a_post_id in post_ids:
         logging.info('Analyzing Post ID %s', a_post_id)
-        asyncio.run(analyze_this(a_post_id))
+        asyncio.run(analyze_post(a_post_id))
 
-async def analyze_this(post_id):
+async def analyze_post(post_id):
     """Analyze text
     """
     logging.info('Analyzing post ID %s', post_id)
@@ -610,6 +610,21 @@ def join_new_subs():
                 insert_data_into_table('errors', error_data)
                 logging.error('Unable to join %s - %s', new_sub, e.args[0])
 
+@app.route('/get_and_analyze_post', methods=['GET'])
+@jwt_required()
+def get_and_analyze_post_endpoint():
+    """Fetch post from Reddit, then Chat prompt a given post_id
+    """
+
+    post_id = request.args.get('post_id')
+    get_and_analyze_post(post_id)
+    return jsonify({'message': 'get_and_analyze_post endpoint'})
+
+def get_and_analyze_post(post_id):
+    get_sub_post(post_id)
+    asyncio.run(analyze_post(post_id))
+    return
+
 if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO) # init logging
@@ -623,4 +638,4 @@ if __name__ == "__main__":
     app.run(port=5000,
             host='0.0.0.0',
             ssl_context=('cert.pem', 'key.pem'),
-            debug=True) # not for production
+            debug=False) # not for production
