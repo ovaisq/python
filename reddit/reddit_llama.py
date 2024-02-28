@@ -621,9 +621,14 @@ def get_and_analyze_post_endpoint():
     return jsonify({'message': 'get_and_analyze_post endpoint'})
 
 def get_and_analyze_post(post_id):
-    get_sub_post(post_id)
-    asyncio.run(analyze_post(post_id))
-    return
+    post_ids = db_get_post_ids()
+    if not post_ids:
+        get_sub_post(post_id)
+        asyncio.run(analyze_post(post_id))
+        return
+    else:
+        logging.info('Post ID %s has already been analyzed', post_id)
+        return
 
 if __name__ == "__main__":
 
