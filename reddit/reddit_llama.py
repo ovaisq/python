@@ -134,11 +134,9 @@ def analyze_posts():
     if not post_ids:
         return
 
-    counter = 0
     for a_post_id in post_ids:
         logging.info('Analyzing Post ID %s', a_post_id)
         asyncio.run(analyze_this(a_post_id))
-        counter = sleep_to_avoid_429(counter)
 
 async def analyze_this(post_id):
     """Analyze text
@@ -239,11 +237,8 @@ def analyze_comments():
         logging.warning('No comments to analyze')
         return
 
-    counter = 0
     for a_comment_id in comment_ids:
-
         asyncio.run(analyze_comment(a_comment_id))
-        counter = sleep_to_avoid_429(counter)
 
 async def analyze_comment(comment_id):
     """Analyze text
