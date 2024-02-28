@@ -502,7 +502,6 @@ def get_authors_comments():
 
     counter = 0
     for an_author in authors:
-        print (an_author)
         try:
             REDDIT.redditor(an_author)
             get_author_comments(an_author)
