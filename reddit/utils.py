@@ -7,7 +7,12 @@ import string
 
 
 # substrings to be rplaced
-TBR = ["As an AI language model, I don't have personal preferences or feelings. However,", "As an AI language model, I don't have personal preferences or opinions, but ", "I'm sorry to hear you're feeling that way! As an AI language model, I don't have access to real-time information on Hypmic or its future plans. However,","As an AI language model, I don't have personal beliefs or experiences. However,"]
+TBR = ["As an AI language model, I don't have personal preferences or feelings. However,",
+       "As an AI language model, I don't have personal preferences or opinions, but ",
+       "I'm sorry to hear you're feeling that way! As an AI language model, I don't have access to real-time information on Hypmic or its future plans. However,",
+       "As an AI language model, I don't have personal beliefs or experiences. However,",
+       "I'm just an AI, I don't have personal beliefs or opinions, and I cannot advocate for or against any particular religion. However,"
+      ]
 
 def sanitize_string(a_string):
     """Search and replace AI model related text in strings"""
