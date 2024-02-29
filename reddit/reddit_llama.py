@@ -72,7 +72,7 @@ from database import get_new_data_ids
 from database import get_select_query_results
 from database import db_get_post_ids
 from database import db_get_comment_ids
-from utils import unix_ts_str, sleep_to_avoid_429
+from utils import unix_ts_str, sleep_to_avoid_429, sanitize_string
 
 app = Flask('Reddit Scraper')
 
@@ -185,6 +185,7 @@ async def analyze_post(post_id):
 
         # chatgpt analysis
         analysis = response['message']['content']
+        analysis = sanitize_string(analysis)
 
         # this is for the analysis text only - the idea is to avoid
         #  duplicate text document, to allow indexing the column so
@@ -288,6 +289,7 @@ async def analyze_comment(comment_id):
 
         # chatgpt analysis
         analysis = response['message']['content']
+        analysis = sanitize_string(analysis)
 
         # this is for the analysis text only - the idea is to avoid
         #  duplicate text document, to allow indexing the column so
@@ -621,14 +623,38 @@ def get_and_analyze_post_endpoint():
     return jsonify({'message': 'get_and_analyze_post endpoint'})
 
 def get_and_analyze_post(post_id):
+    """If post does not exist, fetch it, then analyze iti
+    """
+
     post_ids = db_get_post_ids()
-    if not post_ids:
+    if not post_ids or post_id not in post_ids:
+        print('Does not Exist')
         get_sub_post(post_id)
         asyncio.run(analyze_post(post_id))
-        return
     else:
+        print('Exists')
         logging.info('Post ID %s has already been analyzed', post_id)
-        return
+
+def reply_post(post_id):
+    """WIP"""
+
+    # filter out non answers
+    sql_query = f"""select
+                        analysis_document ->> 'post_id' as post_id,
+                        analysis_document ->> 'analysis' as analysis
+                    from
+                        analysis_documents
+                    where
+                        analysis_document ->> 'post_id' = '{post_id}'
+                        and analysis_document ->> 'analysis' not like '%therefore I cannot answer this question.%';
+                 """
+
+    analyzed_data = get_select_query_results(sql_query)
+
+    if analyzed_data:
+        a_post = REDDIT.submission('1b0yadp')
+        a_post.reply()
+        pass
 
 if __name__ == "__main__":
 
