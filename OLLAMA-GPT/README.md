@@ -74,7 +74,7 @@ Environment="OLLAMA_HOST=0.0.0.0"
   ```
 * Add following models to ollama-gpt: deepseek-llm,llama2,llama-pro 
   ```shell
-  > for llm in deepseek-llm llama2 llama-pro
+  > for llm in deepseek-llm llama2 llama-pro gemma
     do
         ollama pull ${llm}
     done
