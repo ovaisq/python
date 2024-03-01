@@ -145,6 +145,9 @@ async def analyze_post(post_id):
     dt = unix_ts_str()
     client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
 
+    #TODO(fixme): handle updates to posts that may have occurred after they were
+    #       added to the database. Currently, posts are stored in their
+    #       original form as they were when they were collected.
     sql_query = f"""SELECT post_title, post_body, post_id
                     FROM post
                     WHERE post_id='{post_id}'
@@ -277,11 +280,11 @@ async def analyze_comment(comment_id):
                                      model=llm,
                                      stream=False,
                                      messages=[
-                                                 {
-                                                  'role': 'user',
-                                                  'content': 'analyze this: ' + text
-                                                 },
-                                               ],
+                                               {
+                                                'role': 'user',
+                                                'content': 'analyze this: ' + text
+                                               },
+                                              ],
                                      options = {
                                                 'temperature' : 0
                                                }
