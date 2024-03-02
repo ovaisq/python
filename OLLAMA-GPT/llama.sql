@@ -1,5 +1,5 @@
 --©2024, Ovais Quraishi
-CREATE DATABASE reddit; 
+CREATE DATABASE llama; 
 
 --Create Tables
 CREATE TABLE IF NOT EXISTS author (
