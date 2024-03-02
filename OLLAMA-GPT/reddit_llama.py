@@ -113,7 +113,7 @@ def analyze_post_endpoint():
     """
 
     post_id = request.args.get('post_id')
-    asyncio.run(analyze_post(post_id))
+    analyze_post(post_id)
     return jsonify({'message': 'analyze_post endpoint'})
 
 @app.route('/analyze_posts', methods=['GET'])
@@ -136,14 +136,12 @@ def analyze_posts():
 
     for a_post_id in post_ids:
         logging.info('Analyzing Post ID %s', a_post_id)
-        asyncio.run(analyze_post(a_post_id))
+        analyze_post(a_post_id)
 
-async def analyze_post(post_id):
+def analyze_post(post_id):
     """Analyze text
     """
     logging.info('Analyzing post ID %s', post_id)
-    dt = unix_ts_str()
-    client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
 
     #TODO(fixme): handle updates to posts that may have occurred after they were
     #       added to the database. Currently, posts are stored in their
@@ -169,48 +167,8 @@ async def analyze_post(post_id):
             return
     except langdetect.lang_detect_exception.LangDetectException as e:
         logging.warning('Skipping %s - langage detected UNKNOWN %s', post_id, e)
-
-    for llm in LLMS:
-        logging.info('Running %s for %s', llm, post_id)
-        response = await client.chat(
-                                     model=llm,
-                                     stream=False,
-                                     messages=[
-                                               {
-                                                'role': 'user',
-                                                'content': text
-                                               },
-                                              ],
-                                     options = {
-                                                'temperature' : 0
-                                               }
-                                    )
-
-        # chatgpt analysis
-        analysis = response['message']['content']
-        analysis = sanitize_string(analysis)
-
-        # this is for the analysis text only - the idea is to avoid
-        #  duplicate text document, to allow indexing the column so
-        #  to speed up search/lookups
-        analysis_sha512 = hashlib.sha512(str.encode(analysis)).hexdigest()
-
-        # jsonb document
-        analysis_document = {
-                             'unix_time' : dt,
-                             'post_id' : post_id,
-                             'llm' : llm,
-                             'analysis' : analysis
-                            }
-        analysis_data = {
-                         'shasum_512' : analysis_sha512,
-                         'analysis_document' : json.dumps(analysis_document)
-                        }
-
-        insert_data_into_table('analysis_documents', analysis_data)
-        response = {}
-        analysis_document = {}
-        analysis_data = {}
+    prompt = 'respond to this post title and post body: ' + text
+    asyncio.run(prompt_chat_n_store('reddit', 'post', post_id, prompt))
 
 @app.route('/analyze_comment', methods=['GET'])
 @jwt_required()
@@ -219,7 +177,7 @@ def analyze_comment_endpoint():
     """
 
     comment_id = request.args.get('comment_id')
-    asyncio.run(analyze_comment(comment_id))
+    analyze_comment(comment_id)
     return jsonify({'message': 'analyze_comment endpoint'})
 
 @app.route('/analyze_comments', methods=['GET'])
@@ -242,16 +200,13 @@ def analyze_comments():
         return
 
     for a_comment_id in comment_ids:
-        asyncio.run(analyze_comment(a_comment_id))
+        analyze_comment(a_comment_id)
 
-async def analyze_comment(comment_id):
+def analyze_comment(comment_id):
     """Analyze text
     """
 
     logging.info('Analyzing comment ID %s', comment_id)
-    dt = unix_ts_str()
-
-    client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
 
     sql_query = f"""SELECT comment_id, comment_body
                     FROM comment
@@ -275,14 +230,24 @@ async def analyze_comment(comment_id):
     except langdetect.lang_detect_exception.LangDetectException as e:
         logging.warning('Skipping %s - langage detected UNKNOWN %s', comment_id, e)
 
+    prompt = 'respond to this comment: ' + text
+    asyncio.run(prompt_chat_n_store('reddit', 'comment', comment_id, prompt))
+
+async def prompt_chat_n_store(source, category, reference_id, content):
+    """Llama Chat Prompting and response
+    """
+
+    dt = unix_ts_str()
+    client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
     for llm in LLMS:
+        logging.info('Running %s for %s', llm, reference_id)
         response = await client.chat(
                                      model=llm,
                                      stream=False,
                                      messages=[
                                                {
                                                 'role': 'user',
-                                                'content': 'analyze this: ' + text
+                                                'content': content
                                                },
                                               ],
                                      options = {
@@ -300,9 +265,13 @@ async def analyze_comment(comment_id):
         analysis_sha512 = hashlib.sha512(str.encode(analysis)).hexdigest()
 
         # jsonb document
+        #  schema_version key added starting v2
         analysis_document = {
                              'unix_time' : dt,
-                             'comment_id' : comment_id,
+                             'schema_version' : '2',
+                             'source' : source,
+                             'category' : category,
+                             'reference_id' : reference_id,
                              'llm' : llm,
                              'analysis' : analysis
                             }
@@ -310,7 +279,6 @@ async def analyze_comment(comment_id):
                          'shasum_512' : analysis_sha512,
                          'analysis_document' : json.dumps(analysis_document)
                         }
-
         insert_data_into_table('analysis_documents', analysis_data)
         response = {}
         analysis_document = {}
@@ -631,11 +599,10 @@ def get_and_analyze_post(post_id):
 
     post_ids = db_get_post_ids()
     if not post_ids or post_id not in post_ids:
-        print('Does not Exist')
+        logging.warning('Post ID %s does not exist', post_id)
         get_sub_post(post_id)
-        asyncio.run(analyze_post(post_id))
+        analyze_post(post_id)
     else:
-        print('Exists')
         logging.info('Post ID %s has already been analyzed', post_id)
 
 def reply_post(post_id):
