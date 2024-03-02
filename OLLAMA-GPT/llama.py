@@ -74,7 +74,7 @@ from database import db_get_post_ids
 from database import db_get_comment_ids
 from utils import unix_ts_str, sleep_to_avoid_429, sanitize_string
 
-app = Flask('Reddit Scraper')
+app = Flask('LLAMA-GPT')
 
 # constants
 NUM_ELEMENTS_CHUNK = 25
