@@ -1,9 +1,11 @@
 # utils.py
 
+import datetime
 import logging
 import time
 import random
 import string
+from datetime import datetime as DT
 
 
 # substrings to be rplaced
@@ -28,6 +30,18 @@ def unix_ts_str():
 
     dt = str(int(time.time())) # unix time
     return dt
+
+def unix_ts_int():
+    """Unix time as a string"""
+
+    dt = int(time.time()) # unix time
+    return dt
+
+def ts_int_to_dt_obj():
+	"""Convert Unix time to date time object for timestamp column in PostgreSQL table"""
+	epoch_timestamp = unix_ts_int()
+	datetime_object = DT.fromtimestamp(epoch_timestamp, tz=datetime.timezone.utc)
+	return datetime_object
 
 def gen_internal_id():
     """Generate 10 number internal document id"""
