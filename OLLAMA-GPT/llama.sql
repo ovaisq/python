@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS comment (
 );
 
 CREATE TABLE IF NOT EXISTS errors (
-    item_id VARCHAR,
+i   item_id VARCHAR,
     item_type VARCHAR,
     error TEXT
 );
