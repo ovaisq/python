@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """This module provides a function for generating and saving an
 	encryption key to a file using the Fernet cryptography library.
+
+   ©2024, Ovais Quraishi
 """
 
 from pathlib import Path
