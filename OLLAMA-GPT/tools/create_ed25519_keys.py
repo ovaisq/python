@@ -18,19 +18,19 @@ private_key_file = 'private_key.pem'
 public_key_file = 'public_key.pem'
 
 def generate_and_save_keys(private_key_file, public_key_file):
-	"""Generate and save Ed25519 key pair to files.
+    """Generate and save Ed25519 key pair to files.
 
-		Parameters:
-			private_key_file (str): path to the file where the private key will be saved
-			public_key_file (str): path to the file where the public key will be saved
+        Parameters:
+            private_key_file (str): path to the file where the private key will be saved
+            public_key_file (str): path to the file where the public key will be saved
 
-		Returns:
-			None
+        Returns:
+            None
 
-		Raises:
-			FileExistsError: if either of the files already exists
-			KeyGenerationError: if there is an error generating the key pair
-	"""
+        Raises:
+            FileExistsError: if either of the files already exists
+            KeyGenerationError: if there is an error generating the key pair
+    """
 
     print (f'creating {private_key_file} {public_key_file} key files')
     # Generate Ed25519 key pair
