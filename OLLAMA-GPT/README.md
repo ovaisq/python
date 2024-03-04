@@ -1,3 +1,3 @@
 #MOVED
 
-[New Location](git@github.com:ovaisq/OLLAMA-GPT.git)
+[New Location](https://github.com/ovaisq/OLLAMA-GPT)
