@@ -1,4 +1,5 @@
 # utils.py
+# ©2024, Ovais Quraishi
 
 import datetime
 import logging

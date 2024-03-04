@@ -1,4 +1,5 @@
 # reddit_api.py
+# ©2024, Ovais Quraishi
 
 import praw
 from prawcore import exceptions
@@ -6,6 +7,7 @@ from config import get_config
 
 def create_reddit_instance():
     """Create and return a Reddit instance"""
+
     config = get_config()
     try:
         reddit = praw.Reddit(

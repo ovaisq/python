@@ -1,4 +1,5 @@
 # database.py
+# ©2024, Ovais Quraishi
 
 import psycopg2
 import logging

@@ -50,12 +50,12 @@
         - Add logic to handle list of lists with NUM_ELEMENTS_CHUNK elementsimport configparser
 """
 
-
 import asyncio
 import hashlib
 import json
 import logging
 
+import httpx
 import langdetect
 from langdetect import detect
 from flask import Flask, request, jsonify
@@ -65,14 +65,15 @@ from ollama import AsyncClient
 
 # Import required local modules
 from config import get_config
-from reddit_api import create_reddit_instance
 from database import db_get_authors
 from database import insert_data_into_table
 from database import get_new_data_ids
 from database import get_select_query_results
 from database import db_get_post_ids
 from database import db_get_comment_ids
-from utils import unix_ts_str, sleep_to_avoid_429, sanitize_string
+from encryption import encrypt_text
+from reddit_api import create_reddit_instance
+from utils import unix_ts_str, sleep_to_avoid_429, sanitize_string, ts_int_to_dt_obj
 
 app = Flask('LLAMA-GPT')
 
@@ -139,8 +140,9 @@ def analyze_posts():
         analyze_post(a_post_id)
 
 def analyze_post(post_id):
-    """Analyze text
+    """Analyze text from Reddit Post
     """
+
     logging.info('Analyzing post ID %s', post_id)
 
     #TODO(fixme): handle updates to posts that may have occurred after they were
@@ -233,56 +235,65 @@ def analyze_comment(comment_id):
     prompt = 'respond to this comment: ' + text
     asyncio.run(prompt_chat_n_store('reddit', 'comment', comment_id, prompt))
 
-async def prompt_chat_n_store(source, category, reference_id, content):
+async def prompt_chat_n_store(source, category, reference_id, content, encrypt_analysis=False):
     """Llama Chat Prompting and response
     """
 
-    dt = unix_ts_str()
+    dt = ts_int_to_dt_obj()
     client = AsyncClient(host=CONFIG.get('service','OLLAMA_API_URL'))
     for llm in LLMS:
         logging.info('Running %s for %s', llm, reference_id)
-        response = await client.chat(
-                                     model=llm,
-                                     stream=False,
-                                     messages=[
-                                               {
-                                                'role': 'user',
-                                                'content': content
-                                               },
-                                              ],
-                                     options = {
-                                                'temperature' : 0
-                                               }
-                                    )
+        try:
+            response = await client.chat(
+                                         model=llm,
+                                         stream=False,
+                                         messages=[
+                                                 {
+                                                     'role': 'user',
+                                                     'content': content
+                                                 },
+                                                 ],
+                                         options = {
+                                                     'temperature' : 0
+                                                 }
+                                         )
 
-        # chatgpt analysis
-        analysis = response['message']['content']
-        analysis = sanitize_string(analysis)
+            # chatgpt analysis
+            analysis = response['message']['content']
+            analysis = sanitize_string(analysis)
 
-        # this is for the analysis text only - the idea is to avoid
-        #  duplicate text document, to allow indexing the column so
-        #  to speed up search/lookups
-        analysis_sha512 = hashlib.sha512(str.encode(analysis)).hexdigest()
+            # this is for the analysis text only - the idea is to avoid
+            #  duplicate text document, to allow indexing the column so
+            #  to speed up search/lookups
+            analysis_sha512 = hashlib.sha512(str.encode(analysis)).hexdigest()
 
-        # jsonb document
-        #  schema_version key added starting v2
-        analysis_document = {
-                             'unix_time' : dt,
-                             'schema_version' : '2',
-                             'source' : source,
-                             'category' : category,
-                             'reference_id' : reference_id,
-                             'llm' : llm,
-                             'analysis' : analysis
+            # see encryption.py module
+            # encrypt text *** make sure that encryption key file is secure! ***
+            if encrypt_analysis:
+                analysis = encrypt_text(analysis).decode('utf-8')
+
+            # jsonb document
+            #  schema_version key added starting v2
+            analysis_document = {
+                                'schema_version' : '3',
+                                'source' : source,
+                                'category' : category,
+                                'reference_id' : reference_id,
+                                'llm' : llm,
+                                'analysis' : analysis
+                                }
+            analysis_data = {
+                            'timestamp': dt,
+                            'shasum_512' : analysis_sha512,
+                            'analysis_document' : json.dumps(analysis_document)
                             }
-        analysis_data = {
-                         'shasum_512' : analysis_sha512,
-                         'analysis_document' : json.dumps(analysis_document)
-                        }
-        insert_data_into_table('analysis_documents', analysis_data)
-        response = {}
-        analysis_document = {}
-        analysis_data = {}
+            insert_data_into_table('analysis_documents', analysis_data)
+            response = {}
+            analysis_document = {}
+            analysis_data = {}
+        except (httpx.ReadError, httpx.ConnectError) as e:
+            logging.error('%s',e.args[0])
+            raise httpx.ConnectError('Unable to reach Ollama Server') from None
 
 @app.route('/get_sub_post', methods=['GET'])
 @jwt_required()
@@ -599,7 +610,7 @@ def get_and_analyze_post(post_id):
 
     post_ids = db_get_post_ids()
     if not post_ids or post_id not in post_ids:
-        logging.warning('Post ID %s does not exist', post_id)
+        logging.warning('Post ID %s not found in local database', post_id)
         get_sub_post(post_id)
         analyze_post(post_id)
     else:

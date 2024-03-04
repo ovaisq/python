@@ -1,4 +1,5 @@
 # config.py
+# ©2024, Ovais Quraishi
 
 import configparser
 import pathlib
