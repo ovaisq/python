@@ -37,9 +37,6 @@ class TwilioHelper(object):
             self.message_status = self._client.messages(self.sid).fetch().status
             while (self.message_status == 'sent'):
                 self.message_status = self._client.messages(self.sid).fetch().status
-            else:
-                self.message_status = self._client.messages(self.sid).fetch().status
-                return self.message_status
         else:
              self.message_status = 'Destination Phone Number '
              self.message_status += send_to
