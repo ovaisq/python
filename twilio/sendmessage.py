@@ -52,7 +52,7 @@ def main():
         message_info = tw.sendsms(send_sms_to,send_sms_msg)
         print ('Message Status:',message_info)
     else:
-        print (arg_parser.print_help(sys.stderr))
+        print (sys.stderr)
 
 if __name__ == "__main__":
     main()
