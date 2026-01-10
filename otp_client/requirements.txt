@@ -1,0 +1,4 @@
+pillow
+pyotp
+pyzbar
+qrcode
