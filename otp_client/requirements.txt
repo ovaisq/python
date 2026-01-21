@@ -2,3 +2,18 @@ pillow
 pyotp
 pyzbar
 qrcode
+# Core FastAPI and ASGI server
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Authentication and security
+PyJWT
+python-dotenv
+
+# Data validation
+pydantic
+pydantic-settings
+
+# Additional utilities
+python-jose[cryptography]  # Alternative JWT library

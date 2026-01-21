@@ -1,448 +1,395 @@
 #!/usr/bin/env python3
 """
-OTP Client Manager - A command-line tool for managing Time-Based One-Time Passwords (TOTP)
+OTP Service Client Library
 
-This tool allows you to:
-- Add new OTP clients with automatic secret generation
-- Generate OTP codes for existing clients
-- View detailed client information
-- List all registered clients
-- Delete clients when no longer needed
-- Generate QR codes for easy setup with authenticator apps
-- Scan QR codes to import secrets from external sources
+A Python client library for interacting with the OTP Management Service API.
 
-Usage examples:
-    ./otp_client.py add --name "MyService"
-    ./otp_client.py generate --name "MyService"
-    ./otp_client.py info --name "MyService"
-    ./otp_client.py list
-    ./otp_client.py delete --name "MyService"
-
-Requirements:
-    - Python 3.x
-    - pyotp (pip install pyotp)
-    - pillow (pip install pillow)
-    - pyzbar (pip install pyzbar)
-    - qrcode[pil] (pip install qrcode[pil])
-
-Author: OTP Manager
-Version: 1.0
+Usage:
+    from otp_client import OTPServiceClient
+    
+    client = OTPServiceClient("http://localhost:8000", "your-api-key")
+    
+    # Create a client
+    client.create_client("GitHub")
+    
+    # Generate OTP
+    otp = client.generate_otp("GitHub")
+    print(f"OTP: {otp}")
 """
 
-import argparse
-import sqlite3
-import os
-import re
-import pyotp
-from PIL import Image
-import qrcode
-from pyzbar.pyzbar import decode
+import requests
+from typing import Optional, List, Dict, Any
+from pathlib import Path
+import logging
 
-def get_db_path():
-    """Get the database file path"""
-    db_path = os.path.expanduser("~/.otp_manager.db")
-    # Ensure database directory exists
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    return db_path
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def init_database():
-    """Initialize the database if it doesn't exist"""
-    conn = sqlite3.connect(get_db_path())
-    cursor = conn.cursor()
 
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS clients (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            secret TEXT NOT NULL,
-            created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_used TIMESTAMP
-        )
-    ''')
+class OTPServiceException(Exception):
+    """Base exception for OTP Service client"""
+    pass
 
-    conn.commit()
-    conn.close()
 
-class OTPClientManager:
+class AuthenticationError(OTPServiceException):
+    """Authentication failed"""
+    pass
+
+
+class ClientNotFoundError(OTPServiceException):
+    """Client not found"""
+    pass
+
+
+class RateLimitError(OTPServiceException):
+    """Rate limit exceeded"""
+    pass
+
+
+class OTPServiceClient:
     """
-    A manager class for handling OTP clients with database storage
-
-    This class provides methods to:
-    - Add new OTP clients with automatic secret generation
-    - Generate OTP codes for existing clients
-    - View detailed client information
-    - List all registered clients
-    - Delete clients when no longer needed
-    - Generate QR codes for easy setup with authenticator apps
-    - Scan QR codes to import secrets from external sources
+    Client library for the OTP Management Service
+    
+    Args:
+        base_url: Base URL of the OTP service
+        api_key: API key for authentication
+        auto_authenticate: Automatically authenticate on initialization
     """
-
-    def __init__(self):
-        """Initialize the OTP client manager and database"""
-        init_database()
-        self._set_db_permissions()
-
-    def _set_db_permissions(self):
-        """Set secure permissions on the database file"""
-        try:
-            db_path = get_db_path()
-            os.chmod(db_path, 0o600)  # Read/write for owner only
-        except Exception:
-            pass  # Ignore permission errors
-
-    def _validate_client_name(self, name):
-        """Validate client name to prevent injection attacks"""
-        if not name or not isinstance(name, str):
-            return False
-        # Allow alphanumeric, hyphens, underscores, and spaces
-        if re.match(r'^[a-zA-Z0-9 _-]+$', name):
-            return True
-        return False
-
-    def add_client(self, name, secret=None, qr_path=None):
+    
+    def __init__(
+        self,
+        base_url: str = "http://localhost:8000",
+        api_key: Optional[str] = None,
+        auto_authenticate: bool = True
+    ):
+        self.base_url = base_url.rstrip('/')
+        self.api_key = api_key
+        self.token = None
+        self.headers = {}
+        
+        if auto_authenticate and api_key:
+            self.authenticate()
+    
+    def authenticate(self) -> str:
         """
-        Add a new OTP client to the database
-
-        Args:
-            name (str): The name of the client/service
-            secret (str, optional): The secret key for the client. 
-                                   If None, a new secret will be generated.
-            qr_path (str, optional): Path to a QR code image to read secret from.
-                                    If provided, this will override the secret parameter.
-
+        Authenticate with the service and get a JWT token
+        
         Returns:
-            bool: True if client was added successfully, False otherwise
+            The JWT access token
+            
+        Raises:
+            AuthenticationError: If authentication fails
         """
         try:
-            # Validate client name
-            if not self._validate_client_name(name):
-                print("Error: Invalid client name")
-                return False
-
-            # If QR path is provided, extract secret from it
-            if qr_path:
-                secret = self._extract_secret_from_qr(qr_path)
-                if not secret:
-                    print(f"Error: Could not extract secret from QR code at {qr_path}")
-                    return False
-
-            # If no secret provided, generate one
-            if not secret:
-                secret = pyotp.random_base32()
-
-            conn = sqlite3.connect(get_db_path())
-            cursor = conn.cursor()
-
-            cursor.execute(
-                "INSERT OR REPLACE INTO clients (name, secret) VALUES (?, ?)",
-                (name, secret)
+            response = requests.post(
+                f"{self.base_url}/api/v1/token",
+                json={"api_key": self.api_key},
+                timeout=10
             )
-
-            conn.commit()
-            conn.close()
-
-            print(f"Client '{name}' added successfully!")
-            print(f"Secret: {secret}")
-
-            # Generate QR code for the client
-            qr_filename = self._generate_qr_code(name, secret)
-            if qr_filename:
-                print(f"QR code saved as: {qr_filename}")
-
-            return True
-
-        except Exception as e:
-            print(f"Error adding client: {e}")
-            return False
-
-    def _extract_secret_from_qr(self, qr_path):
+            
+            if response.status_code == 401:
+                raise AuthenticationError("Invalid API key")
+            
+            response.raise_for_status()
+            data = response.json()
+            
+            self.token = data["access_token"]
+            self.headers = {"Authorization": f"Bearer {self.token}"}
+            
+            logger.info("Successfully authenticated with OTP service")
+            return self.token
+            
+        except requests.RequestException as e:
+            raise AuthenticationError(f"Authentication failed: {e}")
+    
+    def _ensure_authenticated(self):
+        """Ensure we have a valid token"""
+        if not self.token:
+            if not self.api_key:
+                raise AuthenticationError("No API key provided")
+            self.authenticate()
+    
+    def _handle_response(self, response: requests.Response) -> Dict[str, Any]:
         """
-        Extract secret from a QR code image
-
+        Handle API response and raise appropriate exceptions
+        
         Args:
-            qr_path (str): Path to the QR code image file
+            response: The response object
             
         Returns:
-            str: The extracted secret or None if failed
+            Parsed JSON response
+            
+        Raises:
+            Various exceptions based on response status
         """
-        try:
-            # Validate file path
-            if not os.path.exists(qr_path):
-                print(f"Error: QR code file not found: {qr_path}")
-                return None
-
-            image = Image.open(qr_path)
-            decoded_objects = decode(image)
-
-            if decoded_objects:
-                # Extract the secret from the QR code data
-                data = decoded_objects[0].data.decode('utf-8')
-                # For TOTP, the data should contain a URL with secret
-                if 'otpauth://totp/' in data:
-                    # Extract secret from URL
-                    import urllib.parse
-                    parsed = urllib.parse.urlparse(data)
-                    params = urllib.parse.parse_qs(parsed.query)
-                    if 'secret' in params:
-                        secret = params['secret'][0]
-                        # Validate secret format
-                        if re.match(r'^[A-Z2-7=]+$', secret):
-                            return secret
-                return data  # Return raw data if not a TOTP URL
-
-            return None
-
-        except Exception as e:
-            print(f"Error reading QR code: {e}")
-            return None
-
-    def _generate_qr_code(self, name, secret):
+        if response.status_code == 401:
+            raise AuthenticationError("Invalid or expired token")
+        elif response.status_code == 404:
+            raise ClientNotFoundError(response.json().get("error", "Not found"))
+        elif response.status_code == 429:
+            raise RateLimitError(response.json().get("error", "Rate limit exceeded"))
+        
+        response.raise_for_status()
+        
+        if response.status_code == 204:
+            return {}
+        
+        return response.json()
+    
+    def health_check(self) -> Dict[str, Any]:
         """
-        Generate a QR code for the client
-
-        Args:
-            name (str): The client name
-            secret (str): The secret key
-
+        Check service health
+        
         Returns:
-            str: The filename of the saved QR code or None if failed
+            Health status information
         """
-        try:
-            # Validate secret format
-            if not re.match(r'^[A-Z2-7=]+$', secret):
-                print("Error: Invalid secret format")
-                return None
-
-            # Create TOTP URL
-            totp_url = pyotp.totp.TOTP(secret).provisioning_uri(name, issuer_name="OTP Manager")
-
-            # Generate QR code
-            qr = qrcode.QRCode(
-                version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
-                box_size=10,
-                border=4,
+        response = requests.get(f"{self.base_url}/health", timeout=5)
+        return self._handle_response(response)
+    
+    def create_client(
+        self,
+        name: str,
+        secret: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a new OTP client
+        
+        Args:
+            name: Client name
+            secret: Optional TOTP secret (auto-generated if not provided)
+            
+        Returns:
+            Client information including secret and QR code URL
+        """
+        self._ensure_authenticated()
+        
+        data = {"name": name}
+        if secret:
+            data["secret"] = secret
+        
+        response = requests.post(
+            f"{self.base_url}/api/v1/clients",
+            headers=self.headers,
+            json=data,
+            timeout=10
+        )
+        
+        return self._handle_response(response)
+    
+    def import_from_qr(
+        self,
+        name: str,
+        qr_file_path: str
+    ) -> Dict[str, Any]:
+        """
+        Import a client from a QR code image
+        
+        Args:
+            name: Client name
+            qr_file_path: Path to QR code image file
+            
+        Returns:
+            Client information
+        """
+        self._ensure_authenticated()
+        
+        qr_path = Path(qr_file_path)
+        if not qr_path.exists():
+            raise FileNotFoundError(f"QR code file not found: {qr_file_path}")
+        
+        with open(qr_path, 'rb') as f:
+            files = {'qr_file': (qr_path.name, f, 'image/png')}
+            response = requests.post(
+                f"{self.base_url}/api/v1/clients/import-qr",
+                headers=self.headers,
+                params={"name": name},
+                files=files,
+                timeout=10
             )
-            qr.add_data(totp_url)
-            qr.make(fit=True)
-
-            # Create image
-            img = qr.make_image(fill_color="black", back_color="white")
-
-            # Save QR code
-            qr_filename = f"{name}_qr.png"
-            img.save(qr_filename)
-
-            return qr_filename
-
-        except Exception as e:
-            print(f"Error generating QR code: {e}")
-            return None
-
-    def generate_otp(self, name):
+        
+        return self._handle_response(response)
+    
+    def list_clients(self) -> List[Dict[str, Any]]:
+        """
+        List all OTP clients
+        
+        Returns:
+            List of client information
+        """
+        self._ensure_authenticated()
+        
+        response = requests.get(
+            f"{self.base_url}/api/v1/clients",
+            headers=self.headers,
+            timeout=10
+        )
+        
+        data = self._handle_response(response)
+        return data.get("clients", [])
+    
+    def get_client(self, name: str) -> Dict[str, Any]:
+        """
+        Get detailed information about a specific client
+        
+        Args:
+            name: Client name
+            
+        Returns:
+            Client information
+        """
+        self._ensure_authenticated()
+        
+        response = requests.get(
+            f"{self.base_url}/api/v1/clients/{name}",
+            headers=self.headers,
+            timeout=10
+        )
+        
+        return self._handle_response(response)
+    
+    def generate_otp(self, name: str) -> str:
         """
         Generate a one-time password for a client
-
+        
         Args:
-            name (str): The name of the client
-
+            name: Client name
+            
         Returns:
-            str: The generated OTP or None if failed
+            The 6-digit OTP code
         """
-        try:
-            # Validate client name
-            if not self._validate_client_name(name):
-                print("Error: Invalid client name")
-                return None
-
-            conn = sqlite3.connect(get_db_path())
-            cursor = conn.cursor()
-
-            cursor.execute(
-                "SELECT secret FROM clients WHERE name = ?",
-                (name,)
-            )
-            result = cursor.fetchone()
-
-            if not result:
-                print(f"Client '{name}' not found")
-                conn.close()
-                return None
-
-            secret = result[0]
-
-            try:
-                totp = pyotp.TOTP(secret)
-                otp = totp.now()
-
-                # Update last used timestamp
-                cursor.execute(
-                    "UPDATE clients SET last_used = CURRENT_TIMESTAMP WHERE name = ?",
-                    (name,)
-                )
-                conn.commit()
-                conn.close()
-
-                print(f"OTP for '{name}': {otp}")
-                return otp
-
-            except Exception as e:
-                print(f"Error with secret '{secret}': {e}")
-                conn.close()
-                return None
-
-        except Exception as e:
-            print(f"Error generating OTP: {e}")
-            return None
-
-    def info_client(self, name):
+        self._ensure_authenticated()
+        
+        response = requests.post(
+            f"{self.base_url}/api/v1/clients/{name}/generate",
+            headers=self.headers,
+            timeout=10
+        )
+        
+        data = self._handle_response(response)
+        return data["otp"]
+    
+    def download_qr_code(
+        self,
+        name: str,
+        output_path: Optional[str] = None
+    ) -> str:
         """
-        Show detailed information about a client
-
+        Download QR code for a client
+        
         Args:
-            name (str): The name of the client
-        """
-        try:
-            # Validate client name
-            if not self._validate_client_name(name):
-                print("Error: Invalid client name")
-                return
-
-            conn = sqlite3.connect(get_db_path())
-            cursor = conn.cursor()
-
-            cursor.execute(
-                "SELECT name, secret, created, last_used FROM clients WHERE name = ?",
-                (name,)
-            )
-            result = cursor.fetchone()
-
-            if not result:
-                print(f"Client '{name}' not found")
-                conn.close()
-                return
-
-            print(f"Client Information for '{name}':")
-            print("-" * 50)
-            print(f"Name: {result[0]}")
-            print(f"Secret: {result[1]}")
-            print(f"Created: {result[2]}")
-            print(f"Last used: {result[3] if result[3] else 'Never'}")
-            print("-" * 50)
-
-            conn.close()
-
-        except Exception as e:
-            print(f"Error retrieving client info: {e}")
-
-    def list_clients(self):
-        """
-        List all registered clients with their details
-        """
-        try:
-            conn = sqlite3.connect(get_db_path())
-            cursor = conn.cursor()
-
-            cursor.execute(
-                "SELECT name, created, last_used FROM clients ORDER BY created DESC"
-            )
-            results = cursor.fetchall()
-
-            if not results:
-                print("No clients found")
-                return
-
-            print("Registered Clients:")
-            print("-" * 50)
-            for row in results:
-                name, created, last_used = row
-                last_used_str = last_used if last_used else "Never"
-                print(f"Name: {name}")
-                print(f"  Created: {created}")
-                print(f"  Last used: {last_used_str}")
-                print()
-
-            conn.close()
-
-        except Exception as e:
-            print(f"Error listing clients: {e}")
-
-    def delete_client(self, name):
-        """
-        Delete a client from the database
-
-        Args:
-            name (str): The name of the client to delete
-
+            name: Client name
+            output_path: Optional path to save the QR code (default: {name}_qr.png)
+            
         Returns:
-            bool: True if client was deleted successfully, False otherwise
+            Path to the saved QR code file
         """
-        try:
-            # Validate client name
-            if not self._validate_client_name(name):
-                print("Error: Invalid client name")
-                return False
+        self._ensure_authenticated()
+        
+        response = requests.get(
+            f"{self.base_url}/api/v1/clients/{name}/qr",
+            headers=self.headers,
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            self._handle_response(response)
+        
+        if not output_path:
+            output_path = f"{name}_qr.png"
+        
+        with open(output_path, 'wb') as f:
+            f.write(response.content)
+        
+        logger.info(f"QR code saved to {output_path}")
+        return output_path
+    
+    def delete_client(self, name: str) -> bool:
+        """
+        Delete a client
+        
+        Args:
+            name: Client name
+            
+        Returns:
+            True if successful
+        """
+        self._ensure_authenticated()
+        
+        response = requests.delete(
+            f"{self.base_url}/api/v1/clients/{name}",
+            headers=self.headers,
+            timeout=10
+        )
+        
+        self._handle_response(response)
+        logger.info(f"Client '{name}' deleted successfully")
+        return True
 
-            conn = sqlite3.connect(get_db_path())
-            cursor = conn.cursor()
 
-            cursor.execute("DELETE FROM clients WHERE name = ?", (name,))
+# Convenience functions for quick usage
+def create_client(
+    name: str,
+    secret: Optional[str] = None,
+    base_url: str = "http://localhost:8000",
+    api_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """Quick function to create a client"""
+    client = OTPServiceClient(base_url, api_key)
+    return client.create_client(name, secret)
 
-            if cursor.rowcount > 0:
-                conn.commit()
-                conn.close()
-                print(f"Client '{name}' deleted successfully!")
-                return True
-            else:
-                print(f"Client '{name}' not found")
-                conn.close()
-                return False
 
-        except Exception as e:
-            print(f"Error deleting client: {e}")
-            return False
+def generate_otp(
+    name: str,
+    base_url: str = "http://localhost:8000",
+    api_key: Optional[str] = None
+) -> str:
+    """Quick function to generate an OTP"""
+    client = OTPServiceClient(base_url, api_key)
+    return client.generate_otp(name)
 
-def main():
-    """
-    Main function to handle command line arguments and execute commands
-    """
-    parser = argparse.ArgumentParser(description="OTP Client Manager")
-    parser.add_argument("command", choices=["add", "generate", "info", "list", "delete"],
-                       help="Command to execute")
-    parser.add_argument("--name", help="Name of the client")
-    parser.add_argument("--secret", help="Secret key for the client")
-    parser.add_argument("--qr", help="Path to QR code image to import secret from")
 
-    args = parser.parse_args()
-
-    manager = OTPClientManager()
-
-    if args.command == "add":
-        if not args.name:
-            print("Error: --name is required for add command")
-            return
-        manager.add_client(args.name, args.secret, args.qr)
-
-    elif args.command == "generate":
-        if not args.name:
-            print("Error: --name is required for generate command")
-            return
-        manager.generate_otp(args.name)
-
-    elif args.command == "info":
-        if not args.name:
-            print("Error: --name is required for info command")
-            return
-        manager.info_client(args.name)
-
-    elif args.command == "list":
-        manager.list_clients()
-
-    elif args.command == "delete":
-        if not args.name:
-            print("Error: --name is required for delete command")
-            return
-        manager.delete_client(args.name)
-
+# Example usage
 if __name__ == "__main__":
-    main()
+    import os
+    
+    # Get API key from environment or use default
+    API_KEY = os.getenv("OTP_API_KEY", "your-api-key")
+    BASE_URL = os.getenv("OTP_BASE_URL", "http://localhost:8000")
+    
+    # Create client
+    client = OTPServiceClient(BASE_URL, API_KEY)
+    
+    # Example operations
+    try:
+        # Check health
+        health = client.health_check()
+        print(f"Service health: {health['status']}")
+        
+        # Create a client
+        print("\nCreating client 'ExampleService'...")
+        new_client = client.create_client("ExampleService")
+        print(f"Client created with secret: {new_client['secret']}")
+        
+        # List all clients
+        print("\nListing all clients...")
+        clients = client.list_clients()
+        for c in clients:
+            print(f"  - {c['name']}")
+        
+        # Generate OTP
+        print("\nGenerating OTP for 'ExampleService'...")
+        otp = client.generate_otp("ExampleService")
+        print(f"OTP: {otp}")
+        
+        # Download QR code
+        print("\nDownloading QR code...")
+        qr_path = client.download_qr_code("ExampleService")
+        print(f"QR code saved to: {qr_path}")
+        
+        # Clean up
+        print("\nDeleting client...")
+        client.delete_client("ExampleService")
+        print("Client deleted")
+        
+    except OTPServiceException as e:
+        print(f"Error: {e}")
