@@ -43,7 +43,7 @@ def get_instances_in_region(profile: str, region: str) -> list[dict]:
 
 
 def main():
-    profile = 'ankr'
+    profile = 'moo'
 
     regions = get_regions(profile)
     if not regions:
