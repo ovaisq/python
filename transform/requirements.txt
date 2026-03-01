@@ -1,0 +1,7 @@
+google-api-python-client
+oauthlib
+requests
+google-auth
+openpyxl_dictreader
+pandas
+google-auth-oauthlib
