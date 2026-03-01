@@ -1,3 +1,4 @@
 OLLAMA-GPT/
 .env
 *.db
+.DS_Store/
