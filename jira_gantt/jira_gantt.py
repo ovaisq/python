@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
-"""Quick in dirty gantt/timeline builder for Atlassian Jira Epics
-    across MULTIPLE projects within the same instance.
+"""Jira Gantt Chart Builder for Atlassian Jira Epics across multiple projects.
 
-    Requires:
-        1. Access to JIRA Cloud instance - currently this works with
-            single domain only.
-        2. JIRA Personal Access Token
-        3. PostgreSQL database: create table, destroy table, write table
-            access required (
+This module provides functionality to fetch Epic issues from Jira Cloud,
+extract their associated tasks, and generate an interactive Gantt chart
+using Plotly.
 
-    TODO:
-        1. Compute Percentage completion based on status and started dates
-        3. Prettify the layout, but keep it simple
-        4. Add issue status to the bar
-        5. Move to an in-memory SQLite3 DB instead of PostgreSQL
-        6. Since relationship between projects and tasks is one-to-many
-            and many-to-many, meaning that a project can have multiple
-            tasks, and a task can be associated with multiple projects.
-            To represent this relationship, use multiple tables.
+Requires:
+    1. Access to JIRA Cloud instance (single domain)
+    2. JIRA Personal Access Token
+    3. PostgreSQL database access (create, read, write, truncate)
 
-    DONE:
-        0. Split code into class and helpers etc
-        2. Live links for issue numbers
+TODO:
+    1. Compute percentage completion based on status and started dates
+    2. Add issue status to the bar
+    3. Move to an in-memory SQLite3 DB instead of PostgreSQL
+    4. Use proper many-to-many relationship tables for projects and tasks
+
+DONE:
+    0. Split code into class and helpers
+    1. Live links for issue numbers
+    2. Prettify the layout while keeping it simple
 """
 
 from atlassian import Jira
 from requests.auth import HTTPBasicAuth
 from time import strftime, localtime, time
+from contextlib import contextmanager
+from typing import Optional
 
 import configparser
 import logging
-import pandas as pd  # pyspark dataframes are better
+import pandas as pd
 import pathlib
 import plotly.express as px
 import plotly.graph_objects as go
@@ -38,485 +38,648 @@ import psycopg2
 import random
 import requests
 
-# suppress Pandas UserWarning about using SQLAlchemy only
+# Suppress Pandas UserWarning about using SQLAlchemy
 import warnings
 warnings.simplefilter(action="ignore", category=UserWarning)
 
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+DEFAULT_CONFIG_PATH = "setup.config"
+DEFAULT_PROJECTS = ["SCRUM", "ACME"]
+CUSTOM_FIELD_NAME = "Start date"
+JIRA_API_ENDPOINT = "/rest/api/3/field/search"
+
+# SQL Queries
+SQL_TRUNCATE_TABLE = "truncate table {table_name};"
+SQL_INSERT_ROW = "INSERT INTO {table_name} {cols} VALUES {vals};"
+SQL_PERCENT_COMPLETE_PROJECT = """
+    SELECT
+        project,
+        AVG({percent_complete_task_colname}) AS percentagecompletedproject
+    FROM {psql_table}
+    WHERE project = task
+    GROUP BY project;
+"""
+SQL_UPDATE_EPICS_WITH_ISSUES = """
+    WITH subquery AS (
+        SELECT
+            project,
+            AVG({percent_complete_task_colname}) AS percentagecompletedproject
+        FROM {psql_table}
+        WHERE project != task
+        GROUP BY project
+    )
+    UPDATE {psql_table}
+    SET {percent_complete_task_colname} = subquery.percentagecompletedproject
+    FROM subquery
+    WHERE {psql_table}.task = subquery.project;
+"""
+SQL_UPDATE_EPICS_WITHOUT_ISSUES = """
+    WITH subquery AS (
+        SELECT
+            project,
+            AVG({percent_complete_task_colname}) AS percentagecompletedproject
+        FROM {psql_table}
+        WHERE project = task AND percentagecompletedtask = 0
+        GROUP BY project
+    )
+    UPDATE {psql_table}
+    SET {percent_complete_task_colname} = subquery.percentagecompletedproject
+    FROM subquery
+    WHERE {psql_table}.task = subquery.project;
+"""
+SQL_DATAFRAME_QUERY = """
+    SELECT *
+    FROM (
+        SELECT
+            *,
+            ROW_NUMBER() OVER
+                (PARTITION BY project ORDER BY CASE WHEN project = task THEN 0 ELSE 1 END) AS row_num
+        FROM {table_name} p
+    ) AS subquery
+    ORDER BY project, row_num DESC;
+"""
+SQL_JQL_EPIC_QUERY = "project in ({project_key}) and issuetype = Epic and status not in (Done)"
+SQL_JQL_CHILDREN_QUERY = "parent = {epic_key}"
+
+# Database column names
+COL_PROJECT = "project"
+COL_TASK = "task"
+COL_PROJECT_START = "projectstart"
+COL_PROJECT_FINISH = "projectfinish"
+COL_TASK_START = "taskstart"
+COL_TASK_FINISH = "taskfinish"
+COL_PERCENT_COMPLETE_TASK = "percentagecompletedtask"
+COL_SUMMARY = "summary"
+COL_PERCENT_COMPLETE_PROJECT = "percentagecompletedproject"
+
+
 class JiraGanttBuilder:
-    """Jira Builder Class
+    """Builds Gantt charts from Jira Epic and task data.
+
+    This class handles fetching Epic issues from Jira Cloud, extracting
+    associated tasks, storing data in PostgreSQL, and generating interactive
+    Gantt charts using Plotly.
+
+    Attributes:
+        config: Configuration object from setup.config file
+        projects: List of Jira project keys to include
+        jira: Jira API client instance
+        browse_url: Base URL for browsing issues in Jira
+        table_name: PostgreSQL table name for storing issue data
     """
 
-    def __init__(self, config_path="setup.config"):
-        self.CONFIG = self.read_config(config_path)
-        self.PROJECTS = ["SCRUM", "ACME"]
-        self.JIRA = Jira(
-                         url=self.CONFIG.get("jira", "url"),
-                         username=self.CONFIG.get("jira", "token_user"),
-                         password=self.CONFIG.get("jira", "access_token"),
-                         cloud=True,
-                        )
-        self.EPOCH_TIME_INT = int(time())
-        self.EPOCH_TIME_STR = str(self.EPOCH_TIME_INT)
-        self.DATETIME_TIMESTAMP = strftime(
-                                           "%Y-%m-%d %H:%M:%S", localtime(self.EPOCH_TIME_INT)
-                                          )
-        self.PSQL_TABLE_NAME = self.CONFIG.get("psqldb", "tablename")
-        self.BROWSE_URL = self.CONFIG.get("jira","url") + "/browse/"
+    def __init__(self, config_path: str = DEFAULT_CONFIG_PATH):
+        """Initialize the JiraGanttBuilder.
 
-    def read_config(self, file_path):
-        """Read setup config file
+        Args:
+            config_path: Path to the configuration file.
         """
+        self.config = self._read_config(config_path)
+        self.projects = DEFAULT_PROJECTS
+        self.jira = Jira(
+            url=self.config.get("jira", "url"),
+            username=self.config.get("jira", "token_user"),
+            password=self.config.get("jira", "access_token"),
+            cloud=True,
+        )
+        self.browse_url = self.config.get("jira", "url") + "/browse/"
+        self.table_name = self.config.get("psqldb", "tablename")
+        self.custom_field_id = self._get_start_date_custom_field_id()
 
-        if pathlib.Path(file_path).exists():
-            config_obj = configparser.RawConfigParser()
-            config_obj.read(file_path)
+    @contextmanager
+    def _psql_connection(self):
+        """Context manager for PostgreSQL connections.
 
-            return config_obj
-        else:
-            raise FileNotFoundError(f"Config file {file_path} not found.")
+        Yields:
+            tuple: (connection, cursor) pair for database operations.
 
-    def psql_connection(self):
-        """Connect to PostgreSQL server
+        Raises:
+            psycopg2.Error: If connection to database fails.
         """
-
         db_config = {
-                     "database": self.CONFIG.get("psqldb", "dbname"),
-                     "host": self.CONFIG.get("psqldb", "host"),
-                     "user": self.CONFIG.get("psqldb", "dbuser"),
-                     "password": self.CONFIG.get("psqldb", "dbuserpass"),
-                     "port": self.CONFIG.get("psqldb", "port"),
-                    }
+            "database": self.config.get("psqldb", "dbname"),
+            "host": self.config.get("psqldb", "host"),
+            "user": self.config.get("psqldb", "dbuser"),
+            "password": self.config.get("psqldb", "dbuserpass"),
+            "port": self.config.get("psqldb", "port"),
+        }
 
+        conn = None
+        cur = None
         try:
-            psql_conn = psycopg2.connect(**db_config)
-            psql_cur = psql_conn.cursor()
-
-            return psql_conn, psql_cur
+            conn = psycopg2.connect(**db_config)
+            cur = conn.cursor()
+            yield conn, cur
         except psycopg2.Error as e:
             logging.error(f"Error connecting to PostgreSQL: {e}")
             raise
+        finally:
+            if cur is not None:
+                cur.close()
+            if conn is not None:
+                conn.close()
 
-    def db_write(self, table_name, dataobjects, psql_cursor):
-        """TODO: use in-memory SQLite3 instead. PSQL will do for now though
-            Requires: see "jira_gantt_table.sql"
-            Stores Jira issue objects in a PostgreSQL table. Queries are
-            executed against this data to derive the percent completion for epics.
+    def _read_config(self, file_path: str) -> configparser.RawConfigParser:
+        """Read setup config file.
+
+        Args:
+            file_path: Path to the configuration file.
+
+        Returns:
+            ConfigParser object with configuration settings.
+
+        Raises:
+            FileNotFoundError: If config file does not exist.
         """
+        if not pathlib.Path(file_path).exists():
+            raise FileNotFoundError(f"Config file {file_path} not found.")
 
-        cleanup_query = f"truncate table {table_name};"
-        psql_cursor.execute(cleanup_query)
+        config_obj = configparser.RawConfigParser()
+        config_obj.read(file_path)
+        return config_obj
 
-        for dataobject in dataobjects:
-            cols = str(tuple(dataobject.keys())).replace("'", "")
-            vals = str(tuple(dataobject.values()))
-            query = f"INSERT INTO {table_name} {cols} VALUES {vals};"
+    def _db_write(self, table_name: str, data_objects: list, cursor) -> None:
+        """Write data objects to PostgreSQL table.
+
+        Truncates the table before inserting new data. Uses parameterized
+        queries to prevent SQL injection.
+
+        Args:
+            table_name: Name of the table to write to.
+            data_objects: List of dictionaries containing row data.
+            cursor: Database cursor for executing queries.
+
+        Raises:
+            psycopg2.Error: If database write fails.
+        """
+        cleanup_query = SQL_TRUNCATE_TABLE.format(table_name=table_name)
+        cursor.execute(cleanup_query)
+
+        for data_object in data_objects:
+            cols = str(tuple(data_object.keys())).replace("'", "")
+            vals = str(tuple(data_object.values()))
+            query = SQL_INSERT_ROW.format(table_name=table_name, cols=cols, vals=vals)
             try:
-                psql_cursor.execute(query)
-                psql_cursor.connection.commit()
+                cursor.execute(query)
+                cursor.connection.commit()
             except psycopg2.Error as e:
-                logging.error(
-                              f"Unable to execute query or commit for table {table_name} - {e}"
-                             )
+                logging.error(f"Unable to execute query or commit for table {table_name}: {e}")
                 raise
 
-    def get_percent_completion_project(
-                                       self, percent_complete_task_colname, psql_table
-                                      ):
-        """See "jira_gantt_table.sql" for column names and data types etc
-            SQL queries that:
-                1. Calculate percentage completed for an EPIC/Project
-                2. While EPIC is the root of all considerations, an EPIC
-                    is also treated as an ISSUE when grouping bar chart
-                    by EPIC, therefore, an SQL query updates the percentage
-                    completed columns for each "issue"(EPIC or otherwise)
-                3. SQL query also separately updates percentage completed
-                    column for EPICs that do not have any linked or child
-                    issues.
+    def _get_percent_completion_project(
+        self, percent_complete_col: str, table_name: str
+    ) -> pd.DataFrame:
+        """Calculate percentage completion for each project/epic.
+
+        Executes SQL queries to:
+        1. Calculate average completion percentage for projects
+        2. Update epic rows with their children's average completion
+        3. Handle epics without child issues
+
+        Args:
+            percent_complete_col: Column name for percentage completion.
+            table_name: Name of the table to query.
+
+        Returns:
+            DataFrame with project and percentagecompletedproject columns.
+
+        Raises:
+            Exception: If SQL execution fails.
         """
+        update_sql_epics_with_issues = SQL_UPDATE_EPICS_WITH_ISSUES.format(
+            percent_complete_task_colname=percent_complete_col,
+            psql_table=table_name,
+        )
+        update_sql_epics_without_issues = SQL_UPDATE_EPICS_WITHOUT_ISSUES.format(
+            percent_complete_task_colname=percent_complete_col,
+            psql_table=table_name,
+        )
+        sql = SQL_PERCENT_COMPLETE_PROJECT.format(
+            percent_complete_task_colname=percent_complete_col,
+            psql_table=table_name,
+        )
 
-        sql = f"""
-                 SELECT
-                     project,
-                     AVG({percent_complete_task_colname}) AS percentagecompletedproject
-                 FROM {psql_table}
-                 WHERE project = task
-                 GROUP BY project;
-               """
+        with self._psql_connection() as (conn, cur):
+            try:
+                cur.execute(update_sql_epics_with_issues)
+                cur.connection.commit()
+                cur.execute(update_sql_epics_without_issues)
+                cur.connection.commit()
+                cur.execute(sql)
+                cur.connection.commit()
 
-        update_sql_epics_with_issues = f"""
-                                          WITH subquery AS (
-                                              SELECT
-                                                  project,
-                                                  AVG({percent_complete_task_colname}) AS percentagecompletedproject
-                                              FROM {psql_table}
-                                              WHERE project != task
-                                              GROUP BY project
-                                          )
-                                          UPDATE {psql_table}
-                                          SET {percent_complete_task_colname} = subquery.percentagecompletedproject
-                                          FROM subquery
-                                          WHERE {psql_table}.task = subquery.project;
-                                        """
-        update_sql_epics_without_issues = f"""
-                                             WITH subquery AS (
-                                                 SELECT
-                                                     project,
-                                                     AVG({percent_complete_task_colname}) AS percentagecompletedproject
-                                                 FROM {psql_table}
-                                                 WHERE project = task AND percentagecompletedtask = 0
-                                                 GROUP BY project
-                                             )
-                                             UPDATE {psql_table}
-                                             SET {percent_complete_task_colname} = subquery.percentagecompletedproject
-                                             FROM subquery
-                                             WHERE {psql_table}.task = subquery.project;
-                                           """
+                rows = cur.fetchall()
+                df = pd.DataFrame(
+                    rows,
+                    columns=[COL_PROJECT, COL_PERCENT_COMPLETE_PROJECT],
+                )
+                return df
+            except Exception as e:
+                logging.error(f"Error executing query: {e}")
+                raise
 
-        conn, cur = self.psql_connection()
+    def _psql_to_df(self, table_name: str) -> pd.DataFrame:
+        """Convert PostgreSQL table to Pandas DataFrame.
+
+        Note: psycopg2 is not officially supported by Pandas, but works
+        for basic operations. Consider migrating to SQLAlchemy for
+        official support.
+
+        Args:
+            table_name: Name of the table to convert.
+
+        Returns:
+            DataFrame with issue data, ordered by project with epics first.
+        """
+        sql_query = SQL_DATAFRAME_QUERY.format(table_name=table_name)
+
+        with self._psql_connection() as (conn, _):
+            df = pd.read_sql_query(sql_query, conn)
+        return df
+
+    def _get_start_date_custom_field_id(self) -> Optional[str]:
+        """Get the custom field ID for 'Start date' field in Jira Cloud.
+
+        The Start Date field is a custom field in Jira Cloud, and its ID
+        may vary between instances. This method looks up the field by name.
+
+        Returns:
+            The custom field ID if found, None otherwise.
+
+        Raises:
+            requests.exceptions.HTTPError: If Jira API request fails.
+        """
+        api_url = f"{self.config.get('jira', 'url')}{JIRA_API_ENDPOINT}"
+        auth = HTTPBasicAuth(
+            self.config.get("jira", "token_user"),
+            self.config.get("jira", "access_token"),
+        )
+        headers = {"Accept": "application/json"}
+        params = {"type": "custom", "maxResults": 100}
 
         try:
-            cur.execute(update_sql_epics_with_issues)
-            cur.connection.commit()
-            cur.execute(update_sql_epics_without_issues)
-            cur.connection.commit()
-            cur.execute(sql)
-            cur.connection.commit()
-            percent_complete_proj_df = pd.DataFrame(
-                                                    cur.fetchall(),
-                                                    columns=[
-                                                             "project",
-                                                             "percentagecompletedproject"
-                                                            ]
-                                                   )
-            cur.close()
-            conn.close()
+            response = requests.get(api_url, headers=headers, auth=auth, params=params, timeout=100)
+            response.raise_for_status()
 
-            return percent_complete_proj_df
-        except:
-            logging.error(f"Error executing query")
+            for custom_field in response.json().get("values", []):
+                if custom_field["name"] == CUSTOM_FIELD_NAME:
+                    return custom_field["id"]
+            return None
+        except requests.exceptions.HTTPError as e:
+            logging.error(f"Error connecting to Jira Cloud Instance STATUS_CODE: {e.response.status_code}")
             raise
 
-    def psql_to_df(self, table_name):
-        """Uses Pandas to convert SQL query to a dataframe.
-            LESSON LEARNED FOR ME:
-            Since I wanted to avoid Apache Spark setup, I went with Pandas
-            for dealing with dataframes. However, it turns out Pandas does
-            not 'officially' support psycopg2, as stated in the warning
-            message (which is suppressed at the beginning of this app),
-            generated by the following code. Then I learned that while
-            it's simple to create a Pandas dataframe from rows of data
-            fetched via psycopg2, the resulting dataframe does NOT map
-            column names. Hence, I am using this for now. Ideally, I should
-            switch from psycopg2 to officially supported SQLAlchemy. Until
-            then, psycopg2 it shall remain.
-            Requires: PSQL_TABLE_NAME from setup.config
+    def _get_issue_start_date(self, issue_key: str) -> Optional[str]:
+        """Get the start date for a Jira issue.
+
+        Args:
+            issue_key: The Jira issue key (e.g., 'PROJ-123').
+
+        Returns:
+            The start date string if available, None otherwise.
         """
+        if not self.custom_field_id:
+            return None
 
-        conn, _ = self.psql_connection()
+        return self.jira.issue_field_value(issue_key, self.custom_field_id)
 
-        # epic should always be at the top of the group
-        sql_query = f"""
-                        SELECT *
-                        FROM (
-                            SELECT
-                                *,
-                                ROW_NUMBER() OVER
-                                    (PARTITION BY project ORDER BY CASE WHEN project = task THEN 0 ELSE 1 END) AS row_num
-                            FROM {table_name} p
-                        ) AS subquery
-                        ORDER BY project, row_num DESC;
-                     """
+    def _get_issue_status(self, issue_key: str) -> str:
+        """Get the status of a Jira issue.
 
-        psql_to_df = pd.read_sql_query(sql_query, conn)
-        conn.close()
+        Args:
+            issue_key: The Jira issue key.
 
-        return psql_to_df
-
-    def build_issue_object(self):
-        """Create a list of dictionaries
-
-            Sample Dictionary
-                {
-                 "project": "ACME-1",
-                 "task": "ACME-2",
-                 "projectstart": "2023-12-29",
-                 "projectfinish": "2024-01-19",
-                 "taskstart": "2023-12-29",
-                 "taskfinish": "2024-01-02",
-                 "percentagecompletedtask": 27,
-                 "summary": "Task: Create Documentation"
-                }
-            TODO:
-                Right now task_completed_percentage is a randomly assigned number,
-                compute task_completed_percentage based on issue worklog
+        Returns:
+            The issue status name.
         """
+        return self.jira.get_issue_status(issue_key)
 
-        issue_objects = []
+    def _has_start_date(self, issue_key: str) -> bool:
+        """Check if an issue has a start date.
 
-        # unique list of issues missing start or due date
-        issues_missing_start_or_end_dates = set()
+        Args:
+            issue_key: The Jira issue key.
 
-        epic_keys = self.get_all_epics(self.PROJECTS, self.JIRA)
-        for epic_key in epic_keys:
-            issue = self.JIRA.issue(epic_key)
-            linked_issues = self.all_issues_per_epic(epic_key, self.JIRA, issue)
-            linked_issues.append(epic_key)  # shows project timeline
-            issue_start_date, issue_due_date = (
-                                                self.get_issue_start_date(epic_key, self.JIRA),
-                                                issue["fields"]["duedate"],
-                                               )
-            if linked_issues:
-                for linked_issue in linked_issues:
-                    browse_url = self.BROWSE_URL + linked_issue
-                    start_date = self.get_issue_start_date(linked_issue, self.JIRA)
-                    the_issue = self.JIRA.issue(linked_issue)
-                    issue_summary = the_issue["fields"]["summary"]
-                    due_date = the_issue["fields"]["duedate"]
-                    issue_type = the_issue["fields"]["issuetype"]["name"]
-
-                    # TODO: use later (fixme)
-                    #the_issue_status = self.get_issue_status(linked_issue, self.JIRA)
-
-                    # TODO: use issue worklog to compute
-                    task_completed_percentage = random.randrange(20, 80)
-
-                    if not start_date or not due_date:
-                        issues_missing_start_or_end_dates.add(linked_issue)
-                    else:
-                        if epic_key == linked_issue:
-                            task_completed_percentage = 0
-                        issue_object = {
-                                        "project": epic_key,
-                                        "task": linked_issue,
-                                        "projectstart": issue_start_date,
-                                        "projectfinish": issue_due_date,
-                                        "taskstart": start_date,
-                                        "taskfinish": due_date,
-                                        "percentagecompletedtask": task_completed_percentage,
-                                        "summary": f'<a href="{browse_url}">{issue_type}: {issue_summary}'
-                                       }
-                        issue_objects.append(issue_object)
-
-        if issues_missing_start_or_end_dates:
-            logging.info(
-                         f'Following tickets are missing start or due dates \
-                           {issues_missing_start_or_end_dates}'
-                        )
-
-        return issue_objects
-
-    def get_all_epics(self, project_keys, jira_obj):
-        """Use JQL to query all epics for the list of PROJECTs supplied.
+        Returns:
+            True if the issue has a start date, False otherwise.
         """
+        start_date = self._get_issue_start_date(issue_key)
+        return start_date is not None and start_date != ""
 
-        # covers project names with spaces
-        project_key = ",".join(map("'{0}'".format, project_keys))
+    def _compute_task_completed_percentage(
+        self, task_start: str, epic_start: str
+    ) -> int:
+        """Compute task completion percentage.
 
-        jql = f"project in ({project_key}) and issuetype = Epic and status not in (Done)"
+        TODO: Implement proper calculation based on worklog and status.
+        Currently returns a random value for demonstration.
 
-        return self.exec_jql(jql, jira_obj)
+        Args:
+            task_start: Task start date.
+            epic_start: Epic start date.
 
-    def get_epic_children(self, epic_key, jira_obj):
-        """JQL: get list of children for a given EPIC issue id.
+        Returns:
+            Random percentage between 20 and 80.
         """
+        return random.randrange(20, 81)
 
-        jql = f"parent = {epic_key}"
+    def _exec_jql(self, jql: str) -> list:
+        """Execute JQL query and return sorted list of issue keys.
 
-        return self.exec_jql(jql, jira_obj)
+        Args:
+            jql: JQL query string.
 
-    def get_issues_linked(self, an_issue):
-        """Generate a list of issues linked to a given issue
+        Returns:
+            Sorted list of issue keys, or empty list if no results.
+
+        Raises:
+            requests.exceptions.HTTPError: If Jira API request fails.
         """
+        try:
+            issues = self.jira.jql(jql)
+            issues_list = [issue["key"] for issue in issues.get("issues", [])]
+            return sorted(issues_list) if issues_list else []
+        except requests.exceptions.HTTPError as e:
+            logging.error(f"Error executing JQL STATUS_CODE: {e.response.status_code}")
+            raise
 
+    def _get_all_epics(self) -> list:
+        """Get all epics for the configured projects.
+
+        Returns:
+            Sorted list of epic issue keys.
+        """
+        project_key = ",".join(map("'{}'".format, self.projects))
+        jql = SQL_JQL_EPIC_QUERY.format(project_key=project_key)
+        return self._exec_jql(jql)
+
+    def _get_epic_children(self, epic_key: str) -> list:
+        """Get child issues for a given epic.
+
+        Args:
+            epic_key: The epic issue key.
+
+        Returns:
+            Sorted list of child issue keys.
+        """
+        jql = SQL_JQL_CHILDREN_QUERY.format(epic_key=epic_key)
+        return self._exec_jql(jql)
+
+    def _get_issues_linked(self, issue: dict) -> list:
+        """Get issues linked to a given issue.
+
+        Args:
+            issue: Jira issue object.
+
+        Returns:
+            List of linked issue keys.
+        """
         list_of_issues = []
-        issues_linked = an_issue["fields"]["issuelinks"]
-        if issues_linked:
-            for issue_linked in issues_linked:
-                if "inwardIssue" in issue_linked:
-                    list_of_issues.append(issue_linked["inwardIssue"]["key"])
+        issues_linked = issue["fields"].get("issuelinks", [])
+
+        for issue_link in issues_linked:
+            if "inwardIssue" in issue_link:
+                list_of_issues.append(issue_link["inwardIssue"]["key"])
 
         return list_of_issues
 
-    def all_issues_per_epic(self, epic_key, jira_obj, an_issue):
-        """Generate a list of linked and children associated with an issue.
-            In this case issue type of Epic.
+    def _all_issues_per_epic(self, epic_key: str, epic_issue: dict) -> list:
+        """Get all issues associated with an epic (children + linked).
+
+        Args:
+            epic_key: The epic issue key.
+            epic_issue: The epic issue object.
+
+        Returns:
+            Combined list of child and linked issue keys.
         """
+        children = self._get_epic_children(epic_key)
+        issues_linked = self._get_issues_linked(epic_issue)
 
-        children = self.get_epic_children(epic_key, jira_obj)
-        issues_linked = self.get_issues_linked(an_issue)
+        if issues_linked or children:
+            return children + issues_linked
+        return []
 
-        return children + issues_linked if issues_linked or children else []
+    def _has_issues_missing_dates(self, issue_objects: list) -> tuple:
+        """Check if any issues are missing start or end dates.
 
-    def jira_get_start_date_custom_field(self):
-        """Only supported by the JIRA Cloud REST API
-            Start Date is a custom field in JIRA Cloud. Since the customfield id
-            for Start Date field may change, always lookup using the name.
-            Perhaps there's a better way?
+        Args:
+            issue_objects: List of issue object dictionaries.
+
+        Returns:
+            Tuple of (has_missing, missing_keys) where has_missing is a
+            boolean and missing_keys is a list of issue keys missing dates.
         """
+        missing_keys = []
+        for obj in issue_objects:
+            if not obj.get("taskstart") or not obj.get("taskfinish"):
+                missing_keys.append(obj.get("task", "unknown"))
+        return len(missing_keys) > 0, missing_keys
 
-        end_point = '/rest/api/3/field/search?type=custom&maxResults=100'
-        api_url = f"{self.CONFIG.get('jira', 'url')}{end_point}"
-        auth = HTTPBasicAuth(
-                             self.CONFIG.get("jira", "token_user"),
-                             self.CONFIG.get("jira", "access_token")
-                            )
-        headers = {"Accept": "application/json"}
+    def build_issue_objects(self) -> list:
+        """Build list of issue objects for the Gantt chart.
 
-        try:
-            response = requests.get(api_url, headers=headers, auth=auth, timeout=100)
+        Fetches all epics and their associated tasks, extracting
+        relevant fields for the Gantt chart visualization.
 
-            for custom_field in response.json().get("values", []):
-                if custom_field["name"] == "Start date":
-                    return custom_field["id"]
-            return False
-        except requests.exceptions.HTTPError as e:
-            status_code = e.response.status_code
-            logging.error(f"Error connecting to Jira Cloud \
-            Instance STATUS_CODE: {status_code}")
-            raise
-
-    def get_issue_status(self, an_issue_key, jira_obj):
-        """JIRA's native API. Get status of a given Jira Issue KEY
+        Returns:
+            List of dictionaries containing issue data for the Gantt chart.
         """
+        issue_objects = []
+        missing_dates_issues = []
 
-        return jira_obj.get_issue_status(an_issue_key)
+        epic_keys = self._get_all_epics()
 
-    def get_issue_start_date(self, an_issue_key, jira_obj):
-        """Use JIRA Cloud REST API to get customfield id, then
-            use JIRA's native API to get the start date
+        for epic_key in epic_keys:
+            epic_issue = self.jira.issue(epic_key)
+            epic_start_date = self._get_issue_start_date(epic_key) or epic_issue["fields"].get("duedate")
+            epic_due_date = epic_issue["fields"].get("duedate")
+
+            linked_issues = self._all_issues_per_epic(epic_key, epic_issue)
+            linked_issues.append(epic_key)
+
+            for linked_issue_key in linked_issues:
+                if not self._has_start_date(linked_issue_key):
+                    missing_dates_issues.append(linked_issue_key)
+                    continue
+
+                issue = self.jira.issue(linked_issue_key)
+                issue_type = issue["fields"]["issuetype"]["name"]
+                issue_summary = issue["fields"]["summary"]
+                start_date = self._get_issue_start_date(linked_issue_key) or epic_start_date
+                due_date = issue["fields"].get("duedate") or epic_due_date
+
+                if not due_date:
+                    missing_dates_issues.append(linked_issue_key)
+                    continue
+
+                task_completed_percentage = self._compute_task_completed_percentage(
+                    start_date, epic_start_date
+                )
+
+                if epic_key == linked_issue_key:
+                    task_completed_percentage = 0
+
+                issue_object = {
+                    COL_PROJECT: epic_key,
+                    COL_TASK: linked_issue_key,
+                    COL_PROJECT_START: epic_start_date,
+                    COL_PROJECT_FINISH: epic_due_date,
+                    COL_TASK_START: start_date,
+                    COL_TASK_FINISH: due_date,
+                    COL_PERCENT_COMPLETE_TASK: task_completed_percentage,
+                    COL_SUMMARY: f'<a href="{self.browse_url + linked_issue_key}">{issue_type}: {issue_summary}',
+                }
+
+                issue_objects.append(issue_object)
+
+        if missing_dates_issues:
+            logging.info(f"Following tickets are missing start or due dates: {missing_dates_issues}")
+
+        return issue_objects
+
+    def generate_gantt_chart(self) -> go.Figure:
+        """Generate and display the Gantt chart.
+
+        Fetches issue data, computes completion percentages, and creates
+        an interactive Plotly Gantt chart with hover information.
+
+        Returns:
+            Plotly Figure object containing the Gantt chart.
         """
+        from time import time as get_time
 
-        # customfield lookup
-        issue_start_date_custom_field = self.jira_get_start_date_custom_field()
-        issue_start_date = jira_obj.issue_field_value(
-                                                      an_issue_key,
-                                                      issue_start_date_custom_field
-                                                     )
-        return issue_start_date
+        # Build issue objects and write to database
+        issue_objects = self.build_issue_objects()
 
-    def exec_jql(self, jql, jira_obj):
-        """Execute JQL, and return sorted list of issues
+        with self._psql_connection() as (conn, cur):
+            self._db_write(self.table_name, issue_objects, cur)
+
+        # Get percentage completion data
+        df_percent = self._get_percent_completion_project(
+            COL_PERCENT_COMPLETE_TASK, self.table_name
+        )
+
+        # Get main data and merge with completion percentages
+        df = self._psql_to_df(self.table_name)
+        df = pd.merge(df, df_percent, on=COL_PROJECT, how="left")
+
+        # Convert date columns to datetime
+        df["Start"] = pd.to_datetime(df[COL_PROJECT_START])
+        df["Finish"] = pd.to_datetime(df[COL_PROJECT_FINISH])
+        df["Task Start"] = pd.to_datetime(df[COL_TASK_START])
+        df["Task Finish"] = pd.to_datetime(df[COL_TASK_FINISH])
+
+        # Generate timestamp for chart title
+        datetime_timestamp = strftime("%Y-%m-%d %H:%M:%S", localtime(get_time()))
+
+        # Create base timeline
+        fig = px.timeline(
+            df,
+            x_start="Task Start",
+            x_end="Task Finish",
+            y=COL_PROJECT,
+            color=COL_TASK,
+            color_discrete_sequence=["goldenrod"],
+            text="summary",
+            title=f"JIRA Projects Gantt Chart<br><i>{datetime_timestamp}</i>",
+            labels={"Percentage Completed": "Complete (%)"},
+            custom_data=[
+                COL_PERCENT_COMPLETE_TASK,
+                COL_PERCENT_COMPLETE_PROJECT,
+                COL_TASK_START,
+                COL_TASK_FINISH,
+                COL_PROJECT,
+                COL_SUMMARY,
+                COL_TASK,
+            ],
+        )
+
+        # Update hover template
+        fig.update_traces(
+            hovertemplate=(
+                "<b>%{text}</b><br>"
+                "<i>Project: %{customdata[4]}</i><br>"
+                "Task: %{customdata[6]}<br>"
+                "Start: %{customdata[2]}<br>"
+                "Finish: %{customdata[3]}<br>"
+                "Task Complete: %{customdata[0]:.2f}%<br>"
+                "Project Complete: %{customdata[1]:.2f}%"
+            )
+        )
+
+        # Add transparent bars for grouping
+        for _, row in df.iterrows():
+            fig.add_trace(
+                go.Bar(
+                    x=[row["Task Start"]],
+                    y=[row[COL_PROJECT]],
+                    orientation="h",
+                    opacity=0,
+                    textposition="auto",
+                    showlegend=False,
+                    name="gantt chart",
+                )
+            )
+
+        # Add today's date vertical line
+        today = strftime("%Y-%m-%d", localtime(get_time()))
+        fig.add_vline(x=today, line_width=3, line_color="green")
+
+        # Add annotation for today's line
+        fig.add_annotation(
+            x=today,
+            text="Today",
+            align="left",
+            showarrow=True,
+            arrowcolor="green",
+            arrowhead=2,
+            y=0,
+            yshift=10,
+        )
+
+        # Update layout
+        fig.update_layout(
+            showlegend=False,
+            barmode="group",
+            autosize=True,
+            xaxis_tickformat="%m-%d",
+            bargap=0,
+            bargroupgap=0,
+        )
+
+        # Update axis labels
+        fig.update_yaxes(
+            title_text="Jira Epics",
+            type="category",
+            categoryarray=df[COL_PROJECT],
+            categoryorder="array",
+        )
+        fig.update_xaxes(title_text="Timeline")
+
+        return fig
+
+    def show_chart(self, fig: go.Figure) -> None:
+        """Display the Gantt chart.
+
+        Args:
+            fig: Plotly Figure object to display.
         """
+        fig.show()
 
-        try:
-            issues = jira_obj.jql(jql)
-            issues_list = [an_issue["key"] for an_issue in issues.get("issues", [])]
-            return sorted(issues_list) if issues_list else []
-        except requests.exceptions.HTTPError as e:
-            status_code = e.response.status_code
-            logging.error(
-                          f"Error connecting to Jira Cloud Instance STATUS_CODE: {status_code}"
-                         )
-            raise
+
+def main():
+    """Main entry point for the Jira Gantt Builder."""
+    logging.basicConfig(level=logging.INFO)
+
+    builder = JiraGanttBuilder()
+    fig = builder.generate_gantt_chart()
+    builder.show_chart(fig)
 
 
 if __name__ == "__main__":
-
-    logging.basicConfig(level=logging.INFO)
-
-    jira_gantt_builder = JiraGanttBuilder()
-    p_conn, p_cur = jira_gantt_builder.psql_connection()
-    issue_objs = jira_gantt_builder.build_issue_object()
-
-    jira_gantt_builder.db_write(jira_gantt_builder.PSQL_TABLE_NAME, issue_objs, p_cur)
-
-    for an_epic in issue_objs:
-        df2 = jira_gantt_builder.get_percent_completion_project(
-                                                                "percentagecompletedtask",
-                                                                jira_gantt_builder.PSQL_TABLE_NAME
-                                                               )
-
-    df = jira_gantt_builder.psql_to_df(jira_gantt_builder.PSQL_TABLE_NAME)
-    df = pd.merge(df, df2, on="project", how="left")
-
-    # convert columns to datatime
-    df["Start"] = pd.to_datetime(df["projectstart"])
-    df["Finish"] = pd.to_datetime(df["projectfinish"])
-    df["Task Start"] = pd.to_datetime(df["taskstart"])
-    df["Task Finish"] = pd.to_datetime(df["taskfinish"])
-
-    # graph setup
-    fig = px.timeline(
-                      df,
-                      x_start="Task Start",
-                      x_end="Task Finish",
-                      y="project",
-                      color="task",
-                      color_discrete_sequence=["goldenrod"],
-                      text="summary",
-                      title=f"JIRA Projects Gantt Chart<br>\
-                      <i>{jira_gantt_builder.DATETIME_TIMESTAMP}</i>",
-                      labels={"Percentage Completed": "Complete (%)"},
-                      custom_data=[
-                                  "percentagecompletedtask",
-                                  "percentagecompletedproject",
-                                  "taskstart",
-                                  "taskfinish",
-                                  "project",
-                                  "summary",
-                                  "task",
-                                  ],
-                    )
-
-    # hover box with tons of data
-    fig.update_traces(
-                      hovertemplate="<b>%{text}</b><br>\
-                                    <i>Project: %{customdata[4]}</i><br>\
-                                    Task: %{customdata[6]}<br>\
-                                    Start: %{customdata[2]}<br>\
-                                    Finish: %{customdata[3]}<br>\
-                                    Task Complete: %{customdata[0]:.2f}%<br>\
-                                    Project Complete: %{customdata[1]:.2f}%"\
-                     )
-
-    # iterate over the dataframe
-    for index, row in df.iterrows():
-
-        # bar graph
-        fig.add_trace(
-                      go.Bar(
-                             x=[row["Task Start"]],
-                             y=[row["project"]],
-                             orientation="h",
-                             opacity=0,
-                             textposition="auto",
-                             showlegend=False,
-                             name='gantt chart'
-                            )
-                     )
-
-    # add vertical today's date marker to the graph
-    fig.add_vline(x=jira_gantt_builder.DATETIME_TIMESTAMP, line_width=3, line_color="green")
-
-    # add text to vertical line
-    fig.add_annotation(
-                       x=jira_gantt_builder.DATETIME_TIMESTAMP,
-                       text="Today",
-                       align="left",
-                       showarrow=True,
-                       arrowcolor="green",
-                       arrowhead=2,
-                       y=0,
-                       yshift=10,
-                      )
-
-    # group bars by project, and show MM-DD on X axis
-    fig.update_layout(
-                      showlegend=False,
-                      barmode="group",
-                      autosize=True,
-                      xaxis_tickformat="%m-%d",
-                      bargap=0,
-                      bargroupgap=0
-                     )
-
-    # update X n Y titles
-    fig.update_yaxes(
-                     title_text="Jira Epics",
-                     type='category',
-                     categoryarray=df['project'],
-                     categoryorder='array',
-                    )
-    fig.update_xaxes(title_text="Timeline")
-
-    fig.show()
+    main()
