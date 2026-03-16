@@ -68,8 +68,6 @@ def sqlite_connection(p_config: configparser.RawConfigParser) -> Tuple[Any, Any,
     # Validate that required fields are not empty
     if not db_path:
         raise ValueError("Missing required database configuration: db_path")
-    if not table_name:
-        raise ValueError("Missing required database configuration: tablename")
     
     try:
         sqlite_conn = sqlite3.connect(db_path)
